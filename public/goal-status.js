@@ -79,10 +79,7 @@ function leaderEvidence(assignments) {
   const comparable = sameMetric && facts.length && facts.every(Number.isFinite);
   const number = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 });
   const range = comparable ? [...new Set([Math.min(...facts), Math.max(...facts)])].map(value => number.format(value)).join('–') : '';
-  const statuses = assignments.map(entry => entry.status);
-  const reported = statuses.filter(Boolean).length;
-  return { rows, commonPlan, status: combinedStatus(statuses),
-    statusBasis: reported ? `Статусы лидеров · ${reported} из ${assignments.length}` : '',
+  return { rows, commonPlan,
     factBasis: measured ? `Факты лидеров · ${measured} из ${assignments.length}${range ? ` · ${range}` : ''}` : '' };
 }
 
@@ -105,10 +102,10 @@ export function projectDitGoalStatuses(goals, directory, register, periods = reg
     const plan = single?.plan ?? evidence.commonPlan ?? (hasValue(goal.target) ? goal.target : goal.metric) ?? null;
     const fact = single?.fact ?? null;
     const override = overrides.get(key);
-    const basis = [override ? 'Ручной статус ДИТ' : evidence.statusBasis,
+    const basis = [override ? 'Ручной статус ДИТ' : '',
       direct.rows.length ? 'Итоговая строка ДИТ из Excel' : evidence.factBasis,
       !hasValue(single?.plan) && !hasValue(evidence.commonPlan) && hasValue(plan) ? 'Цель из карты' : ''].filter(Boolean).join('. ');
     return { id: [goal.id, 'dit', period].map(encodeURIComponent).join(':'), goalId: goal.id, scopeId: 'dit', leader,
-      objective: goal.title, period, plan, fact, basis, status: override ?? evidence.status, rows: evidence.rows };
+      objective: goal.title, period, plan, fact, basis, status: override ?? direct.status, rows: evidence.rows };
   }));
 }

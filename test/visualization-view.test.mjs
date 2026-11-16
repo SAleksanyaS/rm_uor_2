@@ -19,17 +19,15 @@ const entries = [
 const card = { id: 'chart', title: 'Статусы карты', kind: 'table', group: 'status', period, status: '', leader: '' };
 const model = { register: { entries, periods: [period] }, cards: [card] };
 
-test('counts goal assignments and includes unknown status without drilling to a broader list', () => {
+test('shows counts per leader without a total over all assignments', () => {
   const html = renderVisualization(model, helpers);
-  assert.match(html, /Назначения целей/u);
-  assert.match(html, /<strong>3<\/strong>/u);
-  assert.match(html, /<span>Нет статуса<\/span>.*<td>1<\/td>/u);
-  assert.doesNotMatch(html, /data-status=""[^>]*>Нет статуса/u);
-  assert.match(html, /data-action="viz-drill" data-period="Q4 2026" data-status="в плане"/u);
+  assert.doesNotMatch(html, /viz-measure|<strong>3<\/strong>/u);
+  assert.match(html, /Руководитель А<\/button><\/th><td>2<\/td>/u);
+  assert.match(html, /Руководитель Б<\/button><\/th><td>1<\/td>/u);
 });
 
 test('keeps distinct goal identities and forwards canonical drill identifiers with legacy text', () => {
-  const html = renderVisualization({ ...model, cards: [{ ...card, group: 'objective' }] }, helpers);
+  const html = renderVisualization({ ...model, cards: [{ ...card, group: 'objective', leader: 'Руководитель А' }] }, helpers);
   assert.match(html, /data-objective="Общее название" data-goal-id="GOAL1"/u);
   assert.match(html, /data-objective="Общее название" data-goal-id="GOAL2"/u);
   const leader = renderVisualization({ ...model, cards: [{ ...card, group: 'leader' }] }, helpers);

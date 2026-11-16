@@ -1,5 +1,5 @@
 const statusOptions = [
-  ['', 'По Excel / лидерам'],
+  ['', 'По итогу ДИТ из Excel'],
   ['Выполнено', 'Выполнено'],
   ['Под риском', 'Под риском'],
   ['В плане', 'В плане'],
@@ -47,7 +47,7 @@ export function renderDitSettings({ dit = [], manual = [], period, periods = [],
   const publishNote = pending ? `Сохранено локально, ожидают публикации · ${pending}` : 'Изменений для публикации нет.';
   return `${title}<section class="panel panel-inner dit-settings stack" aria-label="Редактирование статусов ДИТ">
     <div class="dit-settings-toolbar">
-      <div><h2>Цели ДИТ</h2><p class="muted small">Вариант «По Excel / лидерам» возвращает статус из данных.</p></div>
+      <div><h2>Цели ДИТ</h2><p class="muted small">Если в Excel нет итогового статуса ДИТ, после сброса цель останется без статуса.</p></div>
       <label class="field dit-settings-period"><span>Период</span><select id="dit-settings-period"${available.length ? '' : ' disabled'}>
         ${available.length ? available.map(value => option(value, value, selected)).join('') : option('', 'Нет периодов', '')}</select></label>
     </div>

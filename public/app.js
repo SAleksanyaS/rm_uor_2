@@ -886,7 +886,6 @@ function defaultVisualizationCards(projected) {
   const risk = rows.find(entry => entry.status === 'Под риском')?.status;
   const noMethod = rows.find(entry => normalize(entry.status).startsWith('нет методики'))?.status;
   return [
-    { id: 'forecast', title: 'Статусы целей', kind: 'bar', group: 'status', period, status: '', leader: '' },
     ...(risk ? [{ id: 'risks', title: 'Цели под риском по ИТ-лидерам', kind: 'bar', group: 'leader', period, status: risk, leader: '' }] : []),
     ...(noMethod ? [{ id: 'methods', title: 'Цели без методики', kind: 'table', group: 'objective', period, status: noMethod, leader: '' }] : []),
     { id: 'leaders', title: 'Статусы целей по ИТ-лидерам', kind: 'stacked', group: 'leader', period, status: '', leader: '' }
@@ -1190,8 +1189,8 @@ function showPublicationReview(review) {
       </section>`).join('')}${(review.ditChanges ?? []).map(change => `<section class="stack publish-review-goal">
         <h3>${escape(change.goalId)} · ${escape(change.title)}</h3>
         <p class="muted small">ДИТ · ${escape(change.period)}</p>
-        <div class="comparison"><div class="reading"><h4>Опубликовано</h4><p>${escape(change.before?.status || 'По Excel / лидерам')}</p></div>
-          <div class="reading published"><h4>Будет отправлено</h4><p>${escape(change.after?.status || 'По Excel / лидерам')}</p></div></div>
+        <div class="comparison"><div class="reading"><h4>Опубликовано</h4><p>${escape(change.before?.status || 'По итогу ДИТ из Excel')}</p></div>
+          <div class="reading published"><h4>Будет отправлено</h4><p>${escape(change.after?.status || 'По итогу ДИТ из Excel')}</p></div></div>
       </section>`).join('')}</div>
       <div class="actions"><button type="button" class="button" data-action="${review.ditPeriod ? 'dialog-close' : 'publish-back'}">${review.ditPeriod ? 'Отмена' : 'Назад к выбору'}</button><button type="submit" class="button primary">Опубликовать</button></div>
     </form>`);
@@ -1441,7 +1440,7 @@ document.addEventListener('click', async event => {
       break;
     case 'dit-statuses':
       mapOverviewPeriod = trigger.dataset.period;
-      Object.assign(krFilters, { period: mapOverviewPeriod, leader: '@dit', status: '', query: '', objective: '', goalId: '', page: 0 });
+      Object.assign(krFilters, { period: mapOverviewPeriod, leader: '@dit', status: trigger.dataset.status || '', query: '', objective: '', goalId: '', page: 0 });
       location.hash = 'statuses';
       break;
     case 'goal-assignment-open':

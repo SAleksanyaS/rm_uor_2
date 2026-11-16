@@ -4,20 +4,18 @@
 .map-overview-head p { margin-top: 4px; }
 .map-overview-period { min-width: 123px; }
 .map-overview-period select { min-height: 31px; }
-.map-overview-total { display: flex; flex-wrap: wrap; align-items: start; gap: 9px 16px; padding: 10px 11px; color: var(--navy); background: var(--tint); border-radius: 8px; }
-.map-overview-total-stat { display: grid; flex: 1 1 185px; min-width: 0; align-content: start; gap: 3px; }
-.map-overview-counts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; font-size: 17px; font-variant-numeric: tabular-nums; }
-.map-overview-total-meta { color: var(--muted); font-size: 12px; }
 .map-overview-source { overflow-wrap: anywhere; }
 .map-leaders { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 155px), 1fr)); gap: 7px; min-width: 0; margin: 0; padding: 0; list-style: none; }
 .map-leaders li { min-width: 0; }
-.map-leader { display: grid; align-content: start; gap: 4px; width: 100%; min-height: 100%; padding: 8px 9px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; text-align: left; }
+.map-leader-card { display: grid; grid-template-rows: 1fr auto; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.map-leader { display: grid; align-content: start; gap: 4px; width: 100%; padding: 5px; color: var(--ink); background: var(--paper); border: 1px solid transparent; border-radius: 5px; text-align: left; }
 .map-leader:hover { background: var(--base); border-color: var(--field-border); }
 .map-leader[aria-pressed="true"] { background: var(--tint); border-color: var(--primary); }
 .map-leader-name { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; color: var(--navy); font-size: 13px; font-weight: 650; overflow-wrap: anywhere; }
 .map-leader-arrow { flex: none; color: var(--icon); }
 .map-leader-completed, .map-leader-risk { color: var(--navy); font-size: 13px; font-weight: 620; font-variant-numeric: tabular-nums; }
-.map-overview-risk.has-risk, .map-leader-risk.has-risk { color: var(--risk); }
+.map-leader-risk { justify-self: start; }
+.map-leader-risk.has-risk { color: var(--risk); }
 .map-leader-coverage, .map-leader-source { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .map-overview-method { color: var(--muted); font-size: 12px; }
 .map-overview-method summary { width: fit-content; cursor: pointer; }
@@ -63,10 +61,9 @@
 }
 
 @media (pointer: coarse) {
-  .map-overview-period select, .map-overview-total > .button { min-height: 44px; }
+  .map-overview-period select, .map-leader-risk, .dit-counts .button { min-height: 44px; }
 }
 
-.dit-settings-link { font-size: 12px; }
 .dit-settings-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 16px; }
 .dit-settings-toolbar p { margin-top: 4px; }
 .dit-settings-period { min-width: 130px; }

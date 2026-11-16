@@ -8,41 +8,38 @@ export function summarizeMap(goals, directory, period, reportRows = []) {
     id: entry.id, name: entry.name, ...emptyTotals(),
   }));
   const byId = new Map(leaders.map(leader => [leader.id, leader]));
-  const total = emptyTotals();
   for (const assignment of projectGoalStatuses(goals, directory, { entries: reportRows }, [period])) {
-    for (const counts of [byId.get(assignment.scopeId), total]) {
-      counts.assigned++;
-      if (!assignment.status) continue;
-      counts.assessed++;
-      counts[assignment.preliminary ? 'preliminary' : 'excel']++;
-      if (assignment.status === 'Выполнено') counts.completed++;
-      if (assignment.status === 'Под риском') counts.risk++;
-    }
+    const counts = byId.get(assignment.scopeId);
+    counts.assigned++;
+    if (!assignment.status) continue;
+    counts.assessed++;
+    counts[assignment.preliminary ? 'preliminary' : 'excel']++;
+    if (assignment.status === 'Выполнено') counts.completed++;
+    if (assignment.status === 'Под риском') counts.risk++;
   }
-  return { leaders, total };
+  return { leaders };
 }
 
 function labelsFor(totals) {
   return {
     completed: `Выполнено ${totals.assessed ? totals.completed : '—'} из ${totals.assigned}`,
-    risk: `Под риском ${totals.assessed ? totals.risk : '—'}`,
+    risk: `Под риском ${totals.risk}`,
     coverage: totals.assessed < totals.assigned ? `Статус есть у ${totals.assessed} из ${totals.assigned}` : '',
     sources: [totals.excel ? `Связь с Excel подтверждена · ${totals.excel}` : '',
       totals.preliminary ? `Предварительно из Excel · ${totals.preliminary}` : ''].filter(Boolean).join(' · '),
   };
 }
 
-function leaderButton(leader, selected, { escape }) {
+function leaderButton(leader, selected, period, { escape }) {
   const { completed, risk, coverage, sources } = labelsFor(leader);
-  const info = leader.assigned ? [completed, risk, coverage, sources] : ['Нет назначенных целей'];
+  const info = leader.assigned ? [completed, coverage, sources] : ['Нет назначенных целей'];
   const label = [leader.name, ...info, 'Открыть цели.'].filter(Boolean).join('. ');
-  return `<li><button type="button" class="map-leader" data-action="map-leader" data-id="${escape(leader.id)}" aria-pressed="${leader.id === selected}" aria-label="${escape(label)}">
+  return `<li class="map-leader-card"><button type="button" class="map-leader" data-action="map-leader" data-id="${escape(leader.id)}" aria-pressed="${leader.id === selected}" aria-label="${escape(label)}">
     <span class="map-leader-name">${escape(leader.name)} <span class="map-leader-arrow" aria-hidden="true">→</span></span>
     ${leader.assigned ? `<span class="map-leader-completed">${completed}</span>
-      <span class="map-leader-risk${leader.risk ? ' has-risk' : ''}">${risk}</span>
       ${coverage ? `<span class="map-leader-coverage">${coverage}</span>` : ''}
       ${sources ? `<span class="map-leader-source">${sources}</span>` : ''}` : '<span class="map-leader-coverage">Нет назначенных целей</span>'}
-  </button></li>`;
+  </button>${leader.assigned ? `<button type="button" class="button compact map-leader-risk${leader.risk ? ' has-risk' : ''}" aria-label="${escape(`${leader.name} · ${risk}`)}" data-action="viz-drill" data-period="${escape(period)}" data-status="Под риском" data-leader="${escape(leader.name)}">${risk}</button>` : ''}</li>`;
 }
 
 function ditValue(value, { escape, numberFormat }) {
@@ -100,21 +97,18 @@ export function renderDitOverview(entries, period, helpers, visualization = fals
   if (!Array.isArray(entries)) return '';
   const selected = period || entries[0]?.period;
   const goals = entries.filter(entry => entry.period === selected);
-  const counts = { done: 0, risk: 0, other: 0, unknown: 0 };
-  for (const goal of goals) counts[ditTone(goal.status)]++;
-  const assessed = goals.length - counts.unknown;
-  const categories = [
-    { tone: 'done', label: 'Выполнено', count: counts.done },
-    { tone: 'risk', label: 'Под риском', count: counts.risk },
-    { tone: 'other', label: 'Другие статусы', count: counts.other },
-    { tone: 'unknown', label: 'Нет статуса', count: counts.unknown },
-  ];
+  const counts = new Map();
+  for (const goal of goals) counts.set(goal.status, (counts.get(goal.status) ?? 0) + 1);
+  const risk = counts.get('Под риском') ?? 0;
+  const categories = ['Выполнено', 'Под риском', 'В плане', 'Не выполнено', 'Нет методики', ''].map(status => ({
+    tone: ditTone(status), label: status || 'Нет статуса', count: counts.get(status) ?? 0,
+  }));
   const headingTag = visualization ? 'h2' : 'h3';
   return `<section class="dit-overview${visualization ? ' panel panel-inner' : ''}" aria-labelledby="dit-overview-title">
     <header class="dit-heading"><${headingTag} id="dit-overview-title">Итоги ДИТ</${headingTag}>${selected ? `<span class="muted small">${helpers.escape(selected)}</span>` : ''}
-      ${goals.length ? `<button type="button" class="button compact" data-action="dit-statuses" data-period="${helpers.escape(selected)}">Статусы ДИТ</button><a href="#dit-settings" class="dit-settings-link">Редактировать статусы</a>` : ''}</header>
-    ${goals.length ? `<div class="dit-counts"><strong>Выполнено ${assessed ? counts.done : '—'} из ${goals.length}</strong><strong${counts.risk ? ' class="dit-risk"' : ''}>Под риском ${assessed ? counts.risk : '—'}</strong>
-      ${assessed < goals.length ? `<span class="muted small">Статус есть у ${assessed} из ${goals.length} целей</span>` : ''}</div>
+      </header>
+    ${goals.length ? `<div class="dit-counts"><strong>Выполнено ${counts.get('Выполнено') ?? 0} из ${goals.length}</strong><button type="button" class="button compact${risk ? ' dit-risk' : ''}" data-action="dit-statuses" data-period="${helpers.escape(selected)}" data-status="Под риском">Под риском ${risk}</button>
+      ${categories.slice(2).map(({ label, count }) => `<span class="muted small">${label} · ${count}</span>`).join('')}</div>
       <p class="muted small">Ручной статус имеет приоритет. Факт ДИТ берётся из итоговой строки Excel.</p>
       ${visualization ? ditChart(categories, goals.length) : ''}
       <details class="dit-details"${goals.length <= 5 ? ' open' : ''}><summary>План и факт по целям ДИТ</summary>
@@ -124,9 +118,8 @@ export function renderDitOverview(entries, period, helpers, visualization = fals
 
 export function renderMapOverview({ goals, directory, period, periods, leaderId, register, dit }, helpers) {
   const { escape, option, dateText } = helpers;
-  const { leaders, total } = summarizeMap(goals, directory, period, register?.entries);
-  const { completed, risk, coverage, sources } = labelsFor(total);
-  const bookUsed = total.excel + total.preliminary > 0;
+  const { leaders } = summarizeMap(goals, directory, period, register?.entries);
+  const bookUsed = leaders.some(leader => leader.excel || leader.preliminary);
   const source = bookUsed && register?.source?.name ? `${register.source.name} · ${register.asOf ? `срез от ${dateText(register.asOf)}` : 'дата среза не указана'}` : '';
   return `<section class="panel panel-inner map-overview" aria-labelledby="map-overview-title">
     <header class="map-overview-head"><div><h2 id="map-overview-title">Статусы целей</h2>
@@ -134,19 +127,11 @@ export function renderMapOverview({ goals, directory, period, periods, leaderId,
       <label class="field map-overview-period"><span>Период обзора</span><select id="map-overview-period">${periods.map(value => option(value, value, period)).join('')}</select></label>
     </header>
     ${renderDitOverview(dit, period, helpers)}
-    <div class="map-overview-total">
-      <div class="map-overview-total-stat">
-        <p class="muted small">Назначения по всем лидерам</p>
-        <div class="map-overview-counts"><strong class="map-overview-completed">${completed}</strong><strong class="map-overview-risk${total.risk ? ' has-risk' : ''}">${risk}</strong></div>
-        <div class="map-overview-total-meta">
-          ${coverage ? `<p>${coverage} назначений</p>` : ''}
-          ${sources ? `<p>${sources}</p>` : '<p>Нет данных о статусах за выбранный период.</p>'}
-        </div>
-      </div>
+    <div class="dit-heading"><h3>Результаты по ИТ-лидерам</h3>
       ${leaderId ? '<button type="button" class="button compact" data-action="map-leader" data-id="">Все цели</button>' : ''}
     </div>
     ${source ? `<p class="map-overview-source muted small">${escape(source)}</p>` : ''}
-    ${leaders.length ? `<ul class="map-leaders" aria-label="Статусы целей по лидерам">${leaders.map(leader => leaderButton(leader, leaderId, helpers)).join('')}</ul>` : '<p class="muted small">В карте ещё нет назначений по лидерам.</p>'}
+    ${leaders.length ? `<ul class="map-leaders" aria-label="Статусы целей по лидерам">${leaders.map(leader => leaderButton(leader, leaderId, period, helpers)).join('')}</ul>` : '<p class="muted small">В карте ещё нет назначений по лидерам.</p>'}
     <details class="map-overview-method"><summary>Как считаются статусы</summary>
       <p>Каждая цель учитывается один раз у каждого назначенного лидера. Статус берётся из подтверждённых связей с Excel или из единственного предварительного совпадения. Если связанных строк несколько, явный риск учитывается сразу, а для выполнения нужны выполненные КР во всех строках.</p>
     </details>

@@ -81,11 +81,11 @@ function formatCount(count, { numberFormat }) {
   return numberFormat.format(count);
 }
 
-function legend(statuses, card, helpers, interactive) {
+function legend(statuses, card, helpers, interactive, showCounts = true) {
   return `<ul class="viz-legend" aria-label="Статусы">${statuses.map(item => `<li>
     <span class="viz-swatch viz-tone-${statusTone(item.value)}" aria-hidden="true"></span>
     ${drillButton(item.label, card, 'status', item.value, helpers, interactive)}
-    <span class="viz-legend-count">${formatCount(item.count, helpers)}</span>
+    ${showCounts ? `<span class="viz-legend-count">${formatCount(item.count, helpers)}</span>` : ''}
   </li>`).join('')}</ul>`;
 }
 
@@ -100,10 +100,10 @@ function barChart(rows, card, group, helpers, interactive, statuses = null) {
       return `<li class="viz-bar">
         <div class="viz-bar-label">${drillButton(row.label, card, group, row.value, helpers, interactive, row.id)}<span class="viz-count">${formatCount(row.count, helpers)}</span></div>
         ${track(segments, max)}
-        ${statuses?.length > 1 && breakdown?.length ? `<p class="viz-segment-counts">${breakdown.map(helpers.escape).join(' · ')}</p>` : ''}
+        ${breakdown?.length ? `<p class="viz-segment-counts">${breakdown.map(helpers.escape).join(' · ')}</p>` : ''}
       </li>`;
     }).join('')}</ul>
-    ${statuses ? legend(statuses, card, helpers, interactive) : ''}
+    ${statuses ? legend(statuses, card, helpers, interactive, Boolean(card.leader)) : ''}
   </div>`;
 }
 
@@ -118,7 +118,7 @@ function visualizationBody(card, model, helpers, interactive) {
   if (!card.period) return '<p class="viz-empty muted">Выберите один период в настройках карточки.</p>';
   const entries = cardEntries(card, model.register);
   if (!entries.length) return '<p class="viz-empty muted">По выбранным условиям нет назначений целей.</p>';
-  const group = groups.has(card.group) ? card.group : 'status';
+  const group = card.leader && groups.has(card.group) ? card.group : 'leader';
   const rows = buckets(entries, group, helpers);
   const statusGroups = card.kind === 'stacked' ? buckets(entries, 'status', helpers) : null;
   let content;
@@ -127,7 +127,7 @@ function visualizationBody(card, model, helpers, interactive) {
     content = `<div class="viz-chart viz-composition">${track(statusGroups.map(item => ({ count: item.count, tone: statusTone(item.value) })), entries.length)}
       ${legend(statusGroups, card, helpers, interactive)}</div>`;
   } else content = barChart(rows, card, group, helpers, interactive, statusGroups);
-  return `<div class="viz-measure"><strong>${formatCount(entries.length, helpers)}</strong><span>Назначения целей</span></div>${content}`;
+  return `${!card.leader && card.group !== 'leader' ? '<p class="muted small">Разбивка по ИТ-лидерам</p>' : ''}${content}`;
 }
 
 function cardContext(card, helpers) {

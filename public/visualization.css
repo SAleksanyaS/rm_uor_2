@@ -63,8 +63,6 @@
 .viz-card-heading h2 { color: var(--navy); font-size: clamp(17px, 2.3vw, 21px); letter-spacing: -.025em; overflow-wrap: anywhere; }
 .viz-context { margin-top: 4px; overflow-wrap: anywhere; }
 .viz-format { flex: none; }
-.viz-measure { display: flex; align-items: baseline; gap: 6px; color: var(--muted); }
-.viz-measure strong { color: var(--navy); font-size: clamp(25px, 4vw, 34px); font-weight: 700; line-height: 1; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
 .viz-chart { display: grid; gap: 14px; min-width: 0; }
 .viz-bars { display: grid; gap: 11px; margin: 0; padding: 0; list-style: none; }
 .viz-bar { display: grid; gap: 5px; min-width: 0; }

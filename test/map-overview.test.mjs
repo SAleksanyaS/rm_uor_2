@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { projectDitGoalStatuses, projectGoalStatuses } from '../public/goal-status.js';
-import { renderMapOverview, summarizeMap } from '../public/map-overview.js';
+import { renderDitOverview, renderMapOverview, summarizeMap } from '../public/map-overview.js';
 
 const period = 'Q4 2026';
 const directory = [
@@ -37,7 +37,6 @@ test('overview counts explicit statuses per assignment and prefers reliably link
   const counts = ({ assigned, assessed, completed, risk, excel, preliminary }) =>
     [assigned, assessed, completed, risk, excel, preliminary];
   assert.deepEqual(result.leaders.map(counts), [[3, 2, 1, 1, 1, 1], [3, 1, 0, 0, 1, 0]]);
-  assert.deepEqual(counts(result.total), [6, 3, 1, 1, 2, 1]);
 });
 
 test('shared projection keeps unknown eligible assignments and original evidence for each period', () => {
@@ -65,9 +64,8 @@ test('overview renders counts and explicitly marks missing coverage', () => {
     escape, option: value => `<option>${value}</option>`, numberFormat: new Intl.NumberFormat('ru-RU'),
   });
   assert.match(view, /Выполнено\s+—\s+из 1/);
-  assert.match(view, /Под риском\s+—/);
+  assert.match(view, /Под риском\s+0/);
   assert.match(view, /Статус есть у 0 из 1/);
-  assert.match(view, /Нет данных о статусах за выбранный период/);
   assert.match(view, /data-action="map-leader" data-id="a"/);
   assert.doesNotMatch(view, /%|<progress|К плану/);
 });
@@ -75,16 +73,28 @@ test('overview renders counts and explicitly marks missing coverage', () => {
 test('DIT uses an explicit Excel total or shows the leader spread without fabricating a total', () => {
   const goals = [goal('maturity', 'a', { title: 'Модель зрелости', target: '80% команд', assignments: [{ leaderId: 'a' }, { leaderId: 'b' }] })];
   const leaderRows = [{ ...excel('maturity', 'a', 'Выполнено'), fact: 83, keyResult: 'Доля команд' },
-    { ...excel('maturity', 'b', 'Выполнено'), fact: 100, keyResult: 'Доля команд' }];
+    { ...excel('maturity', 'b', 'Под риском'), fact: 100, keyResult: 'Доля команд' }];
   const [withoutTotal] = projectDitGoalStatuses(goals, directory, { periods: [period], entries: leaderRows });
-  assert.deepEqual([withoutTotal.scopeId, withoutTotal.plan, withoutTotal.fact, withoutTotal.status], ['dit', 80, null, 'Выполнено']);
+  assert.deepEqual([withoutTotal.scopeId, withoutTotal.plan, withoutTotal.fact, withoutTotal.status], ['dit', 80, null, '']);
   assert.match(withoutTotal.basis, /83–100/);
-  const total = { ...excel('maturity', 'dit', 'Есть риски'), fact: 97 };
+  const total = { ...excel('maturity', 'dit', 'Выполнено'), fact: 97 };
   const [withTotal] = projectDitGoalStatuses(goals, directory, { periods: [period], entries: [...leaderRows, total] });
-  assert.deepEqual([withTotal.plan, withTotal.fact, withTotal.status], [80, 97, 'Под риском']);
+  assert.deepEqual([withTotal.plan, withTotal.fact, withTotal.status], [80, 97, 'Выполнено']);
   assert.deepEqual(withTotal.rows, [total]);
   const [overridden] = projectDitGoalStatuses(goals, directory, { periods: [period], entries: [...leaderRows, total] }, [period],
     [{ goalId: 'maturity', period, status: 'В плане' }]);
   assert.deepEqual([overridden.plan, overridden.fact, overridden.status], [80, 97, 'В плане']);
   assert.match(overridden.basis, /Ручной статус ДИТ/);
+});
+
+test('DIT risk opens the selected DIT period and cluster risk opens only that leader', () => {
+  const helpers = { escape: value => String(value ?? ''), option: () => '', numberFormat: new Intl.NumberFormat('ru-RU') };
+  const goals = [goal('g', 'a')];
+  const report = { entries: [excel('g', 'a', 'Есть риски')], periods: [period] };
+  const dit = projectDitGoalStatuses(goals, directory, report);
+  const overview = renderMapOverview({ goals, directory, period, periods: [period], register: report, dit }, helpers);
+  assert.match(overview, /data-action="dit-statuses" data-period="Q4 2026" data-status="Под риском">Под риском 0/);
+  assert.match(overview, /data-action="viz-drill" data-period="Q4 2026" data-status="Под риском" data-leader="Анна">Под риском 1/);
+  assert.doesNotMatch(overview, /Назначения по всем лидерам|Редактировать статусы/);
+  assert.match(renderDitOverview(dit, period, helpers), /Нет статуса · 1/);
 });
