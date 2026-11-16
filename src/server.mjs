@@ -4,6 +4,7 @@ import { pipeline } from 'node:stream/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { appVersion, maxSourceBytes, openWorkspace, WorkspaceError } from './workspace.mjs';
+import { seedWorkspace } from './seed-workspace.mjs';
 import { createBrowserConnector, validateBrowserConfig } from './browser-connector.mjs';
 import { BrowserWorkspaceError, openBrowserWorkspace } from './browser-workspace.mjs';
 import { BrowserScenarioError, parseBrowserScenario, serializeBrowserScenario } from './browser-scenario.mjs';
@@ -258,8 +259,9 @@ export async function startServer({
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const port = Number(process.env.RM_UOR_PORT ?? 4179);
-  const dataDir = process.env.RM_UOR_DATA_DIR ? resolve(process.env.RM_UOR_DATA_DIR) : undefined;
+  const dataDir = process.env.RM_UOR_DATA_DIR ? resolve(process.env.RM_UOR_DATA_DIR) : join(root, '.local');
   try {
+    if (!process.env.RM_UOR_DATA_DIR) await seedWorkspace(join(root, 'seed'), dataDir);
     const { server, url } = await startServer({ port, dataDir });
     console.log(`Рабочее место УОР ${appVersion} — ${url}`);
     process.once('SIGINT', () => server.close());
