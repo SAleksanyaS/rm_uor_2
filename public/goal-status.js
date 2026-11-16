@@ -69,6 +69,12 @@ function hasValue(value) {
   return value != null && value !== '';
 }
 
+export function ditValue(value, unit, { escape, numberFormat }) {
+  if (!hasValue(value)) return '—';
+  const formatted = typeof value === 'number' ? numberFormat.format(value) : value;
+  return escape(formatted + (unit ? (unit === '%' ? '%' : ' ' + unit) : ''));
+}
+
 function leaderEvidence(assignments) {
   const rows = assignments.flatMap(entry => entry.rows);
   const measured = assignments.filter(entry => entry.rows.some(row => hasValue(row.fact))).length;
@@ -86,7 +92,7 @@ function leaderEvidence(assignments) {
 export function projectDitGoalStatuses(goals, directory, register, periods = register?.periods ?? [], manual = []) {
   const periodSet = new Set(periods.filter(period => typeof period === 'string' && period.trim()));
   const reports = reportIndex(register?.entries ?? [], periodSet);
-  const overrides = new Map(manual.filter(entry => entry.status).map(entry => [assignmentKey(entry.goalId, 'dit', entry.period), entry.status]));
+  const overrides = new Map(manual.map(entry => [assignmentKey(entry.goalId, 'dit', entry.period), entry]));
   const assignments = new Map();
   for (const entry of projectGoalStatuses(goals, directory, register, [...periodSet])) {
     const key = assignmentKey(entry.goalId, 'dit', entry.period);
@@ -99,13 +105,17 @@ export function projectDitGoalStatuses(goals, directory, register, periods = reg
     const direct = reportResult(reports.get(key));
     const evidence = direct.rows.length ? direct : leaderEvidence(assignments.get(key) ?? []);
     const single = direct.rows.length === 1 ? direct.rows[0] : null;
-    const plan = single?.plan ?? evidence.commonPlan ?? (hasValue(goal.target) ? goal.target : goal.metric) ?? null;
-    const fact = single?.fact ?? null;
     const override = overrides.get(key);
-    const basis = [override ? 'Ручной статус ДИТ' : '',
+    const measurement = override?.measurement;
+    const plan = measurement ? measurement.plan
+      : single?.plan ?? evidence.commonPlan ?? (hasValue(goal.target) ? goal.target : goal.metric) ?? null;
+    const fact = measurement?.fact ?? single?.fact ?? null;
+    const basis = [override?.status ? 'Ручной статус ДИТ' : '',
+      measurement ? (measurement.method === 'manual-v1' ? 'Факт введён вручную' : 'Факт из выбранных ячеек XLSX') : '',
       direct.rows.length ? 'Итоговая строка ДИТ из Excel' : evidence.factBasis,
-      !hasValue(single?.plan) && !hasValue(evidence.commonPlan) && hasValue(plan) ? 'Цель из карты' : ''].filter(Boolean).join('. ');
+      !measurement && !hasValue(single?.plan) && !hasValue(evidence.commonPlan) && hasValue(plan) ? 'Цель из карты' : ''].filter(Boolean).join('. ');
     return { id: [goal.id, 'dit', period].map(encodeURIComponent).join(':'), goalId: goal.id, scopeId: 'dit', leader,
-      objective: goal.title, period, plan, fact, basis, status: override ?? direct.status, rows: evidence.rows };
+      objective: goal.title, period, plan, fact, basis, unit: measurement?.unit, measurement,
+      status: override?.status || direct.status, rows: evidence.rows };
   }));
 }

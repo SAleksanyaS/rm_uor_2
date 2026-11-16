@@ -1,8 +1,10 @@
 import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
+import { normalizeDitMeasurement } from './dit-measurement.mjs';
 
 const sharedPath = 'data/rm-uor.json';
+const measurementsPath = 'data/rm-uor-dit-measurements.json';
 const sha = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const maxBytes = 8 * 1024 * 1024;
@@ -237,6 +239,13 @@ function validDitStatuses(rows) {
     && new Set(rows.map(ditStatusKey)).size === rows.length;
 }
 
+async function snapshotFile(path, revision, local) {
+  const tree = await git(['ls-tree', '-z', '--full-tree', revision, '--', path], local);
+  if (!tree) return undefined;
+  if (!/^100(?:644|755) blob /.test(tree)) throw new Error('Expected a data file');
+  return JSON.parse(await git(['cat-file', 'blob', revision + ':' + path], local));
+}
+
 async function snapshot(config, repo, revision, auth) {
   const { remote } = config;
   const local = { repo, gitExecutable: config.gitExecutable };
@@ -249,13 +258,24 @@ async function snapshot(config, repo, revision, auth) {
     throw problem('SHARED_UNAVAILABLE', 'Не удалось получить выбранную версию из Git.');
   }
   try {
-    const tree = await git(['ls-tree', '-z', '--full-tree', revision, '--', sharedPath], local);
-    if (!tree) return empty;
-    if (!/^100(?:644|755) blob /.test(tree)) throw new Error('Expected a data file');
-    const data = JSON.parse(await git(['cat-file', 'blob', `${revision}:${sharedPath}`], local));
+    const data = await snapshotFile(sharedPath, revision, local);
+    if (data === undefined) return empty;
     if (!Number.isSafeInteger(data.version) || data.version < 1 || !validGoals(data.goals) || !Array.isArray(data.history)
         || ('ditStatuses' in data && !validDitStatuses(data.ditStatuses))) {
       throw new Error('Invalid shared snapshot');
+    }
+    const measurements = await snapshotFile(measurementsPath, revision, local);
+    if (measurements !== undefined) {
+      if (measurements.schemaVersion !== 1 || !Array.isArray(measurements.measurements)) throw new Error('Invalid DIT measurements');
+      const statuses = new Map((data.ditStatuses ?? []).map(row => [ditStatusKey(row), row]));
+      const seen = new Set();
+      for (const item of measurements.measurements) {
+        const key = ditStatusKey(item);
+        const row = statuses.get(key);
+        if (!row || seen.has(key)) throw new Error('Invalid DIT measurement identity');
+        seen.add(key);
+        row.measurement = normalizeDitMeasurement(row.goalId, row.period, item.measurement);
+      }
     }
     return { revision, version: data.version, goals: data.goals, history: data.history,
       ...('ditStatuses' in data ? { ditStatuses: data.ditStatuses } : {}) };
@@ -303,8 +323,18 @@ export async function publishShared(input, { expectedRevision, goals = [], ditSt
   const history = [...current.history, { version, author, publishedAt, goalIds }];
   const next = { version, goals: [...merged.values()], history };
   if (current.ditStatuses || ditStatuses.length) next.ditStatuses = [...mergedStatuses.values()];
-  const bytes = JSON.stringify(next, null, 2) + '\n';
-  if (!Number.isSafeInteger(version) || Buffer.byteLength(bytes) >= maxBytes) {
+  const snapshotData = next.ditStatuses ? { ...next, ditStatuses: next.ditStatuses.map(({ measurement, ...row }) => row) } : next;
+  const files = new Map([[sharedPath, JSON.stringify(snapshotData, null, 2) + '\n']]);
+  if (next.ditStatuses?.some(row => row.measurement) || current.ditStatuses?.some(row => row.measurement)) {
+    try {
+      const measurements = next.ditStatuses.filter(row => row.measurement).map(({ goalId, period, measurement }) =>
+        ({ goalId, period, measurement: normalizeDitMeasurement(goalId, period, measurement) }));
+      files.set(measurementsPath, JSON.stringify({ schemaVersion: 1, measurements }, null, 2) + '\n');
+    } catch {
+      throw problem('INVALID_PUBLICATION', 'Проверьте измерения ДИТ перед выпуском.');
+    }
+  }
+  if (!Number.isSafeInteger(version) || [...files.values()].some(bytes => Buffer.byteLength(bytes) >= maxBytes)) {
     throw problem('INVALID_PUBLICATION', 'Общая версия превышает поддерживаемый размер.');
   }
   const temporary = await mkdtemp(join(config.cacheDir, 'publish-')).catch(() => {
@@ -312,7 +342,7 @@ export async function publishShared(input, { expectedRevision, goals = [], ditSt
   });
   try {
     const gitExecutable = config.gitExecutable;
-    const commit = await prepareCommit({ repo, temporary, bytes, revision, author, version, gitExecutable });
+    const commit = await prepareCommit({ repo, temporary, files, revision, author, version, gitExecutable });
     try {
       const args = ['push', '--porcelain', '--no-follow-tags', '--recurse-submodules=no'];
       const destination = ['--', config.remote, `${commit}:${config.ref}`];
@@ -346,12 +376,14 @@ export async function publishShared(input, { expectedRevision, goals = [], ditSt
   }
 }
 
-async function prepareCommit({ repo, temporary, bytes, revision, author, version, gitExecutable }) {
+async function prepareCommit({ repo, temporary, files, revision, author, version, gitExecutable }) {
   const local = { repo, gitExecutable };
   const index = { ...local, extraEnv: { GIT_INDEX_FILE: join(temporary, 'index') } };
   await git(['read-tree', revision ?? '--empty'], index);
-  const blob = (await git(['hash-object', '-w', '--stdin'], { ...local, input: bytes })).trim();
-  await git(['update-index', '--add', '--cacheinfo', `100644,${blob},${sharedPath}`], index);
+  for (const [path, bytes] of files) {
+    const blob = (await git(['hash-object', '-w', '--stdin'], { ...local, input: bytes })).trim();
+    await git(['update-index', '--add', '--cacheinfo', `100644,${blob},${path}`], index);
+  }
   const tree = (await git(['write-tree'], index)).trim();
   const identity = { name: author, email: 'rm-uor@localhost' };
   const args = ['commit-tree', tree, '-m', `RM UOR shared snapshot ${version}`];

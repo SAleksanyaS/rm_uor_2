@@ -35,6 +35,46 @@ function deferred() {
 const selection = { goalIds: [manual.goalId] };
 const shared = (revision, version = 0, goals = []) => ({ revision, version, history: [], goals });
 
+test('a verified DIT fact travels with the reviewed status and can be cleared independently', async t => {
+  let current = shared('base');
+  const git = {
+    async readShared() { return current; },
+    async publishShared(_config, input) {
+      current = { ...shared('next-' + (current.version + 1), current.version + 1), ditStatuses: input.ditStatuses };
+      return current;
+    }
+  };
+  const { workspace, dataDir } = await fixture(t, git);
+  const { workspace: reader } = await fixture(t, git);
+  const request = { goalIds: [], ditPeriod: 'Q4 2026' };
+  const change = { goalId: 'SW26.1', status: 'В плане', expectedRevision: null };
+  const measurement = { method: 'manual-v1', fact: 0, plan: 80, unit: '%', asOf: '2026-11-06', reference: 'Сверенный отчёт' };
+  const save = item => workspace.execute('dit-status', { period: request.ditPeriod, changes: [item] });
+  await workspace.execute('refresh');
+  let [row] = (await save({ ...change, measurement })).ditDrafts;
+  assert.equal(row.measurement.fact, 0);
+  assert.equal(row.measurement.author, 'Тестовый куратор');
+  assert.match(row.measurement.id, /^[a-f\d]{64}$/);
+  const initial = row.measurement;
+  [row] = (await save({ ...change, status: 'Под риском', expectedRevision: row.revision })).ditDrafts;
+  assert.deepEqual(row.measurement, initial);
+  const unchanged = await save({ ...change, status: row.status, expectedRevision: row.revision, measurement });
+  assert.deepEqual(unchanged.ditDrafts[0], row);
+  const restarted = await openWorkspace({ dataDir, git });
+  assert.deepEqual(restarted.getState().ditDrafts[0], row);
+  const preview = await workspace.execute('publishpreview', request);
+  assert.deepEqual(preview.ditChanges[0].after.measurement, initial);
+  await workspace.execute('publish', { ...request, token: preview.token });
+  assert.deepEqual((await reader.execute('refresh')).ditPublished[0].measurement, initial);
+  await assert.rejects(save({ ...change, expectedRevision: row.revision, measurement: { ...measurement, asOf: '2026-02-30' } }), { code: 'INVALID' });
+  const cleared = await save({ ...change, expectedRevision: row.revision, status: row.status, measurement: null });
+  assert.equal(cleared.ditDrafts[0].status, row.status);
+  assert.equal(cleared.ditDrafts[0].measurement, undefined);
+  const clearPreview = await workspace.execute('publishpreview', request);
+  await workspace.execute('publish', { ...request, token: clearPreview.token });
+  assert.equal((await reader.execute('refresh')).ditPublished[0].measurement, undefined);
+});
+
 test('saving a status persists locally without sending or changing original bytes', async t => {
   let writes = 0;
   const { workspace, dataDir } = await fixture(t, { publishShared() { writes++; } });

@@ -139,6 +139,38 @@ test('publishes DIT statuses by goal and period while retaining blank tombstones
   );
 });
 
+test('keeps DIT measurements when a legacy checkout publishes only status rows, and clears explicitly', async t => {
+  const { readShared, publishShared } = await import('../src/shared-git.mjs');
+  const { buildDitMeasurement } = await import('../src/dit-measurement.mjs');
+  const { directory, remote, config } = await fixture(t);
+  const initial = dit('one', 'Y26', 'В плане', '8e5d0445-4df4-495b-ad09-e997d1fcf359');
+  const measurement = await buildDitMeasurement(initial.goalId, initial.period,
+    { method: 'manual-v1', fact: 97, plan: 80, unit: '%', asOf: '2026-11-06', reference: 'Контрольный отчёт' },
+    { author: 'Александр', recordedAt: '2026-11-06T10:00:00.000Z' });
+  const first = await publishShared(config, {
+    expectedRevision: null, ditStatuses: [{ ...initial, measurement }], author: 'Александр'
+  });
+  assert.deepEqual((await readShared(config)).ditStatuses[0].measurement, measurement);
+  const legacy = join(directory, 'old writer');
+  git('clone', remote, legacy);
+  const statusFile = join(legacy, 'data', 'rm-uor.json');
+  const snapshot = JSON.parse(await readFile(statusFile, 'utf8'));
+  assert.equal(snapshot.ditStatuses[0].measurement, undefined);
+  const revised = { ...initial, status: 'Под риском', revision: '878f975d-c986-4c55-bafc-c4c67c560ff1' };
+  snapshot.ditStatuses = [revised];
+  snapshot.version++;
+  await writeFile(statusFile, JSON.stringify(snapshot));
+  git('-C', legacy, 'add', 'data/rm-uor.json');
+  git('-C', legacy, '-c', 'user.name=Old app', '-c', 'user.email=test@localhost', 'commit', '-m', 'Status only');
+  git('-C', legacy, 'push', 'origin', 'main');
+  const received = await readShared(config);
+  assert.notEqual(received.revision, first.revision);
+  assert.deepEqual(received.ditStatuses[0], { ...revised, measurement });
+  const cleared = { ...revised, revision: '7de445b0-a543-4c6a-a9ee-318b3b5fdd20' };
+  await publishShared(config, { expectedRevision: received.revision, ditStatuses: [cleared], author: 'Александр' });
+  assert.deepEqual((await readShared(config)).ditStatuses, [cleared]);
+});
+
 test('checks configured portable Git and gives a diagnostic when it is missing', async t => {
   const { checkGitExecutable, readShared } = await import('../src/shared-git.mjs');
   const { directory, config } = await fixture(t);

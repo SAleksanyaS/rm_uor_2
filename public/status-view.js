@@ -1,3 +1,5 @@
+import { ditValue } from './goal-status.js';
+
 const pageSize = 25;
 
 function normalize(value) {
@@ -81,8 +83,8 @@ function tableRow(entry, helpers) {
   const rows = entry.rows ?? [];
   const dit = entry.scopeId === 'dit';
   const evidence = dit ? entry : rows[0];
-  const plan = display(evidence?.plan, helpers);
-  const fact = display(evidence?.fact, helpers);
+  const plan = dit ? ditValue(entry.plan, entry.unit, helpers) : display(evidence?.plan, helpers);
+  const fact = dit ? ditValue(entry.fact, entry.unit, helpers) : display(evidence?.fact, helpers);
   const basis = dit && entry.basis ? escape(entry.basis) : '';
   const details = !dit && rows.length > 1 ? `${rows.length} КР · план и факт в деталях` : '';
   const metrics = details
@@ -130,7 +132,7 @@ export function renderStatusRows(model, helpers) {
 export function renderStatusPage(model, helpers) {
   const { heading, empty, escape } = helpers;
   const { register, loading, error } = model;
-  const title = heading('Статусы целей', 'План и факт по целям ДИТ и ИТ-лидеров из Excel.', model.sourcePicker);
+  const title = heading('Статусы целей', 'План, факт и статус по целям ДИТ и ИТ-лидеров.', model.sourcePicker);
   if (!register) {
     if (loading) return `${title}<p class="muted loading" role="status">Читаем статусы из Excel…</p>`;
     if (error) return `${title}<p class="inline-error" role="alert">${escape(error)}</p>`;

@@ -85,6 +85,9 @@ test('DIT uses an explicit Excel total or shows the leader spread without fabric
     [{ goalId: 'maturity', period, status: 'В плане' }]);
   assert.deepEqual([overridden.plan, overridden.fact, overridden.status], [80, 97, 'В плане']);
   assert.match(overridden.basis, /Ручной статус ДИТ/);
+  const [measured] = projectDitGoalStatuses(goals, directory, { periods: [period], entries: [...leaderRows, total] }, [period],
+    [{ goalId: 'maturity', period, status: '', measurement: { method: 'manual-v1', fact: 0, plan: 88, unit: '%' } }]);
+  assert.deepEqual([measured.plan, measured.fact, measured.unit, measured.status], [88, 0, '%', 'Выполнено']);
 });
 
 test('DIT risk opens the selected DIT period and cluster risk opens only that leader', () => {

@@ -4,14 +4,14 @@ import { renderWeekly } from './weekly-view.js';
 import { renderVisualization, renderVisualizationBuilder, renderVisualizationEditor } from './visualization-view.js';
 import { renderBrowserConnectors, renderBrowserEditor, renderBrowserReports } from './browser-view.js';
 import { renderMapOverview } from './map-overview.js';
-import { projectDitGoalStatuses, projectGoalStatuses } from './goal-status.js';
-import { renderDitSettings } from './dit-settings-view.js';
+import { ditValue, projectDitGoalStatuses, projectGoalStatuses } from './goal-status.js';
+import { ditExportButton, renderDitFactEditor, renderDitMeasurement, renderDitReports, renderDitSettings } from './dit-settings-view.js';
 import { renderGitAuth } from './git-auth-view.js';
 
 const sections = [
   {
     label: 'Итоги', icon: 'results',
-    pages: [['map', 'Карта целей'], ['statuses', 'Статусы целей'], ['weekly', 'Еженедельный отчёт'], ['browser-reports', 'Отчёты из браузера'], ['visualization', 'Визуализация'], ['history', 'История']],
+    pages: [['map', 'Карта целей'], ['statuses', 'Статусы целей'], ['dit-reports', 'Срезы ДИТ'], ['weekly', 'Еженедельный отчёт'], ['browser-reports', 'Отчёты из браузера'], ['visualization', 'Визуализация'], ['history', 'История']],
   },
   {
     label: 'Настройка', icon: 'setup',
@@ -348,8 +348,10 @@ function renderExcelStatuses(goalId, period, scopeId) {
   const date = register?.asOf ? `Срез от ${dateText(register.asOf)}` : 'Дата среза не указана';
   const total = dit ? `<section class="reading excel-status">
     <h3>Итог ДИТ</h3>
-    <p class="excel-fact"><strong>Факт ${escape(factText(dit.fact))}</strong><span>План ${escape(factText(dit.plan))}</span></p>
+    <p class="excel-fact"><strong>Факт ${ditValue(dit.fact, dit.unit, statusHelpers)}</strong><span>План ${ditValue(dit.plan, dit.unit, statusHelpers)}</span></p>
     ${rowBadge(dit)}${dit.basis ? `<p class="reading-meta">${escape(dit.basis)}</p>` : ''}
+    ${renderDitMeasurement(dit.measurement, statusHelpers)}
+    ${dit.measurement ? ditExportButton(goalId, period, statusHelpers) : ''}
   </section>` : '';
   if (!rows.length) return total;
   if (scopeId !== 'dit' && rows.length === 1) {
@@ -364,7 +366,7 @@ function renderExcelStatuses(goalId, period, scopeId) {
   return `${total}<details class="context-details excel-status"${rows.length <= 8 ? ' open' : ''}>
     <summary>${icon('chevron')}План и факт из Excel · ${rows.length}</summary>
     <div class="context-body">
-      <p class="muted small">${escape(date)}${scopeId === 'dit' ? ' · строки по руководителям' : ''}</p>
+      <p class="muted small">${escape(date)}${scopeId === 'dit' ? (rows.some(row => row.scopeId === 'dit') ? ' · итоговые строки ДИТ' : ' · строки по руководителям') : ''}</p>
       <ul class="excel-status-list">${rows.map(row => `<li>
         <button type="button" class="kr-open" data-action="kr-open" data-id="${escape(row.id)}">${escape(scopeId === 'dit' ? leaders.get(row.scopeId) || row.keyResult : row.keyResult)}</button>
         <span>План ${escape(factText(row.plan))} · факт ${escape(factText(row.fact))}</span>${rowBadge(row)}
@@ -694,6 +696,26 @@ function ditStatusChanges(form, includeSaved = false) {
     .map(control => ({ goalId: control.dataset.ditGoal, status: control.value, expectedRevision: control.dataset.revision || null }));
 }
 
+function syncDitFactFields(form) {
+  for (const group of form.querySelectorAll('[data-dit-methods]')) {
+    const enabled = group.dataset.ditMethods.split(' ').includes(form.elements.method.value);
+    group.hidden = !enabled;
+    for (const input of group.querySelectorAll('input, select')) input.disabled = !enabled;
+  }
+}
+
+function openDitFactEditor(goalId, period) {
+  const goal = state.goals.find(item => item.id === goalId);
+  if (!goal) return;
+  const row = state.ditStatuses.find(item => item.goalId === goalId && item.period === period);
+  const sources = state.sources.filter(source => source.type === 'xlsx').slice().reverse();
+  const origin = row?.measurement?.origin;
+  const book = origin?.sourceId ? sources.find(source => source.id === origin.sourceId) : sources[0];
+  const sheets = automationSheetOptions(book, origin?.sheet);
+  showDialog(renderDitFactEditor({ goal, period, row, book, sources, sheets }, statusHelpers));
+  syncDitFactFields(dialog.querySelector('#dit-fact-form'));
+}
+
 function goalStatusRegister(dit = false) {
   if (dit) {
     const source = registerError ? null : register;
@@ -996,15 +1018,19 @@ async function exportBrowserScenario(form, recording) {
       actions: parseBrowserSteps(form.elements.actions.value), downloadSelector: form.elements.downloadSelector.value.trim(),
     };
     const { text } = await post('browser/scenario', { draft });
-    const url = URL.createObjectURL(new Blob([text], { type: 'application/json;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'rm-uor-browser-scenario.json';
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadJson(text, 'rm-uor-browser-scenario.json');
   } catch (error) {
     showNotice(error.message, true);
   }
+}
+
+function downloadJson(text, name) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function importBrowserScenario(input) {
@@ -1087,6 +1113,7 @@ const pages = {
   reconcile: () => renderReconciliation(reconciliationModel(), statusHelpers),
   edit: () => renderMap(true),
   'dit-settings': renderDitStatusSettings,
+  'dit-reports': () => renderDitReports({ goals: state.goals, rows: state.ditStatuses, drafts: state.ditDrafts }, statusHelpers),
   sources: renderSources,
   directory: renderDirectory,
   automation: renderAutomation,
@@ -1170,6 +1197,13 @@ function previewStatus(row) {
     ${row.risk ? `<p class="small">Риск — ${escape(row.risk)}</p>` : ''}`;
 }
 
+function previewDitResult(row) {
+  const measurement = row?.measurement;
+  return `<p>${escape(row?.status || 'По итогу ДИТ из Excel')}</p>
+    ${measurement ? `<p><strong>Факт ${ditValue(measurement.fact, measurement.unit, statusHelpers)}</strong> · План ${ditValue(measurement.plan, measurement.unit, statusHelpers)}</p>
+      ${renderDitMeasurement(measurement, statusHelpers)}` : '<p class="muted small">Отдельный факт ДИТ не задан.</p>'}`;
+}
+
 function showPublicationReview(review) {
   showDialog(`<h2 id="dialog-title" tabindex="-1">Предпросмотр публикации</h2>
     <dl class="definition publish-destination">
@@ -1189,8 +1223,8 @@ function showPublicationReview(review) {
       </section>`).join('')}${(review.ditChanges ?? []).map(change => `<section class="stack publish-review-goal">
         <h3>${escape(change.goalId)} · ${escape(change.title)}</h3>
         <p class="muted small">ДИТ · ${escape(change.period)}</p>
-        <div class="comparison"><div class="reading"><h4>Опубликовано</h4><p>${escape(change.before?.status || 'По итогу ДИТ из Excel')}</p></div>
-          <div class="reading published"><h4>Будет отправлено</h4><p>${escape(change.after?.status || 'По итогу ДИТ из Excel')}</p></div></div>
+        <div class="comparison"><div class="reading"><h4>Опубликовано</h4>${previewDitResult(change.before)}</div>
+          <div class="reading published"><h4>Будет отправлено</h4>${previewDitResult(change.after)}</div></div>
       </section>`).join('')}</div>
       <div class="actions"><button type="button" class="button" data-action="${review.ditPeriod ? 'dialog-close' : 'publish-back'}">${review.ditPeriod ? 'Отмена' : 'Назад к выбору'}</button><button type="submit" class="button primary">Опубликовать</button></div>
     </form>`);
@@ -1411,6 +1445,23 @@ document.addEventListener('click', async event => {
       gitOperation = undefined;
       publishDialog([...dialog.querySelectorAll('input[name="goalIds"]')].map(input => input.value));
       break;
+    case 'dit-fact-edit': {
+      const form = trigger.closest('#dit-status-form');
+      if (ditStatusChanges(form).length) {
+        showNotice('Сохраните изменения статусов перед правкой факта ДИТ.', true);
+        break;
+      }
+      openDitFactEditor(id, form.dataset.period);
+      break;
+    }
+    case 'dit-fact-export': {
+      const row = state.ditStatuses.find(entry => entry.goalId === id && entry.period === trigger.dataset.period);
+      if (!row?.measurement) break;
+      const { goalId, period, measurement } = row;
+      const name = [goalId, period].join('-').replace(/[^a-z0-9._-]+/gi, '-') + '-' + measurement.id.slice(0, 12);
+      downloadJson(JSON.stringify({ schemaVersion: 1, goalId, period, measurement }, null, 2) + '\n', 'dit-' + name + '.json');
+      break;
+    }
     case 'dit-publish': {
       const ditPeriod = trigger.dataset.period;
       const changes = ditStatusChanges(trigger.form);
@@ -1585,6 +1636,14 @@ document.addEventListener('input', event => {
 
 document.addEventListener('change', async event => {
   const control = event.target;
+  if (control.form?.id === 'dit-fact-form') {
+    if (control.name === 'method') syncDitFactFields(control.form);
+    if (control.name === 'sourceId') {
+      const source = state.sources.find(item => item.id === control.value);
+      control.form.elements.sheet.innerHTML = automationSheetOptions(source);
+    }
+    return;
+  }
   if (control.matches('.theme-picker input[name="theme"]') && control.checked) {
     await saveTheme(control);
     return;
@@ -1718,6 +1777,18 @@ document.addEventListener('submit', async event => {
   const fields = new FormData(form);
   const body = Object.fromEntries(fields);
   switch (form.id) {
+    case 'dit-fact-form': {
+      let measurement = null;
+      if (event.submitter?.value !== 'clear') {
+        measurement = { ...body, plan: body.plan === '' ? null : Number(body.plan) };
+        if (body.method === 'manual-v1') measurement.fact = Number(body.fact);
+      }
+      const { period, goal, status, revision } = form.dataset;
+      const change = { goalId: goal, status, expectedRevision: revision || null, measurement };
+      await run(() => post('dit-status', { period, changes: [change] }),
+        measurement ? 'Факт ДИТ сохранён локально' : 'Отдельный факт ДИТ сброшен', { close: true });
+      break;
+    }
     case 'dit-status-form': {
       const changes = ditStatusChanges(form, true);
       if (changes.length) await run(() => post('dit-status', { period: form.dataset.period, changes }), 'Статусы ДИТ сохранены');
@@ -1819,7 +1890,7 @@ document.addEventListener('submit', async event => {
       const { credentials, credentialRemote } = gitOperation ?? {};
       const ditPeriod = form.dataset.ditPeriod || undefined;
       await run(() => post('publish', { goalIds, ditPeriod, credentials, credentialRemote, token: form.dataset.token }),
-        'Выбранные статусы опубликованы', { close: true });
+        'Выбранные данные опубликованы', { close: true });
       break;
     }
   }

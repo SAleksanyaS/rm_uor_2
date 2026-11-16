@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { deflateRawSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
 import { openWorkbook, parseGoalMap } from '../src/imports.mjs';
+import { buildDitMeasurement, normalizeDitMeasurement } from '../src/dit-measurement.mjs';
 
 function zip(parts) {
   const locals = [];
@@ -41,6 +43,44 @@ function zip(parts) {
   end.writeUInt32LE(offset, 16);
   return Buffer.concat([...locals, ...entries, end]);
 }
+
+test('a new workbook produces a reproducible DIT snapshot, with explicit cells and no inferred zero', async () => {
+  const sourceFor = achieved => {
+    const bytes = zip({
+      'xl/workbook.xml': '<workbook><sheets><sheet name="Срез" r:id="r1"/></sheets></workbook>',
+      'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="r1" Target="worksheets/sheet1.xml" Type="http://test/worksheet"/></Relationships>',
+      'xl/worksheets/sheet1.xml': '<worksheet><sheetData><row r="2"><c r="A2"><v>' + achieved
+        + '</v></c><c r="B2"><v>50</v></c><c r="C2"><v>90</v></c><c r="D2"><f>1+2</f></c><c r="E2"><v>0.97</v></c></row></sheetData></worksheet>'
+    });
+    const id = createHash('sha256').update(bytes).digest('hex');
+    return { source: { id, type: 'xlsx', name: 'Срез.xlsx' }, bytes };
+  };
+  const first = sourceFor(45);
+  const second = sourceFor(46);
+  const settings = { method: 'xlsx-ratio-v1', sheet: 'Срез', numerator: 'a2', denominator: 'B2', planCell: 'C2', asOf: '2026-10-30' };
+  const run = (file, overrides = {}, recordedAt = '2026-11-16T07:20:00.000Z') =>
+    buildDitMeasurement('SW26.3', 'Y26', { ...settings, sourceId: file.source.id, ...overrides },
+      { readOriginal: async () => file, author: 'Куратор', recordedAt });
+  const original = await run(first);
+  assert.deepEqual([original.fact, original.plan, original.unit], [90, 90, '%']);
+  assert.deepEqual(original.origin.numerator, { address: 'A2', value: 45 });
+  assert.equal(original.id, (await run(first, {}, '2026-11-16T08:20:00.000Z')).id);
+  const updated = await run(second, { asOf: '2026-11-06' });
+  assert.equal(updated.fact, 92);
+  assert.notEqual(updated.id, original.id);
+  const direct = await run(first, { method: 'xlsx-cell-v1', factCell: 'A2', unit: 'команд' });
+  assert.equal(direct.fact, 45);
+  const percent = await run({ ...first, source: { ...first.source, name: 'Копия.xlsx' } },
+    { method: 'xlsx-cell-v1', factCell: 'E2', unit: '%', planCell: '', scale: 'fraction' });
+  assert.equal(percent.fact, 97);
+  assert.equal(percent.origin.factCell.value, 0.97);
+  assert.equal(original.id, (await run({ ...first, source: { ...first.source, name: 'Копия.xlsx' } })).id);
+  await assert.rejects(run(first, { denominator: 'D2' }), /D2/);
+  await assert.rejects(run(first, { numerator: 'C2' }), /числитель/i);
+  assert.deepEqual(normalizeDitMeasurement('SW26.3', 'Y26', original), original);
+  assert.throws(() => normalizeDitMeasurement('SW26.3', 'Q4 2026', original), /версии/);
+  assert.throws(() => normalizeDitMeasurement('SW26.3', 'Y26', { ...original, fact: 0 }), /отличается/);
+});
 
 test('the goal map reads only structured data and preserves leader scope', () => {
   const payload = {

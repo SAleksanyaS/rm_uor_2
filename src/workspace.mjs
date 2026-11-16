@@ -5,6 +5,7 @@ import { openWorkbook, parseGoalMap } from './imports.mjs';
 import { readStatusRegister } from './status-register.mjs';
 import { compareStatusSnapshots, registerKey } from './status-snapshots.mjs';
 import { validateCards } from './visualization-config.mjs';
+import { buildDitMeasurement, normalizeDitMeasurement } from './dit-measurement.mjs';
 import { projectGoalStatuses } from '../public/goal-status.js';
 import * as nativeGit from './shared-git.mjs';
 
@@ -91,7 +92,8 @@ const safeError = error => error instanceof Error ? error.message : 'Прове�
 const byId = entries => new Map(entries.map(entry => [entry.id, entry]));
 const ditStatusKey = row => JSON.stringify([row.goalId, row.period]);
 const validDitPeriod = period => /^(?:Q[1-4] 20\d{2}|Y\d{2})$/u.test(period);
-const publicDitStatus = ({ goalId, period, status, revision }) => ({ goalId, period, status, revision });
+const publicDitStatus = ({ goalId, period, status, revision, measurement }) =>
+  ({ goalId, period, status, revision, ...(measurement ? { measurement } : {}) });
 
 function readMap(bytes) {
   const imported = parseGoalMap(bytes);
@@ -175,7 +177,13 @@ function normalizeShared(snapshot) {
         !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(row.revision)) {
       throw new WorkspaceError('В общей версии некорректна запись статуса ДИТ.', 'INVALID_SHARED', 409);
     }
-    return { ...publicDitStatus(row), goalId: validatedId(row.goalId, 'Цель ДИТ') };
+    const goalId = validatedId(row.goalId, 'Цель ДИТ');
+    let measurement;
+    if (row.measurement !== undefined) {
+      try { measurement = normalizeDitMeasurement(goalId, row.period, row.measurement); }
+      catch (error) { throw new WorkspaceError(safeError(error), 'INVALID_SHARED', 409); }
+    }
+    return publicDitStatus({ ...row, goalId, measurement });
   });
   if (new Set(ditStatuses.map(ditStatusKey)).size !== ditStatuses.length) {
     throw new WorkspaceError('В общей версии повторяется статус цели ДИТ за один период.', 'INVALID_SHARED', 409);
@@ -548,11 +556,20 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
       if (change.expectedRevision !== (current?.revision ?? null)) {
         throw new WorkspaceError('Статус цели ДИТ изменился. Обновите таблицу и проверьте правки.', 'CONFLICT', 409);
       }
+      let measurement = current?.measurement;
+      if (change.measurement === null) measurement = undefined;
+      else if (change.measurement !== undefined) {
+        const author = requireName();
+        try {
+          const next = await buildDitMeasurement(goal.id, period, change.measurement, { readOriginal, author, recordedAt: now() });
+          if (next.id !== measurement?.id) measurement = next;
+        } catch (error) { throw new WorkspaceError(safeError(error)); }
+      }
       const { remote, branch } = state.profile;
       const target = remote ? { remote, branch } : null;
-      if (status === (current?.status ?? '') && (!draft ||
+      if (status === (current?.status ?? '') && measurement === current?.measurement && (!draft ||
           (sameResult(draft.base, accepted) && sameResult(draft.target, target)))) continue;
-      rows.set(key, { ...row, revision: randomUUID(), base: accepted, target });
+      rows.set(key, { ...publicDitStatus({ ...row, revision: randomUUID(), measurement }), base: accepted, target });
       changed = true;
     }
     if (changed) await commit({ ...state, ditDrafts: [...rows.values()] });

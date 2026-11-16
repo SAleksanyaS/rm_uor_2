@@ -32,7 +32,7 @@
 | `/api/snapshot` | `sourceId, asOf, expectedRevision` | Подтверждение даты `YYYY-MM-DD` для распознанной книги |
 | `/api/statuslink` | `sourceId, entryId, goalId, scopeId, expectedRevision` | Связь однозначной строки. `goalId: null` фиксирует отсутствие связи. `scopeId` необязателен, при выборе нужен назначенный лидер |
 | `/api/status` | `goalId, scopeId, period, value, status, plan, comment, risk, asOf, expectedRevision` | Черновик результата. `value` допускает `null` или число от 0 до 1 000 000. Ревизия относится к общей версии. Нужны ФИО, существующая цель и участник |
-| `/api/dit-status` | `period, changes: [{goalId, status, expectedRevision}]` | До 200 уникальных действующих целей. Поддерживаются квартал и год. Пустой `status` снимает переопределение. Проверяются ревизии каждой строки |
+| `/api/dit-status` | `period, changes: [{goalId, status, expectedRevision, measurement?}]` | До 200 уникальных действующих целей. Поддерживаются квартал и год. Пустой `status` снимает переопределение статуса. Проверяются ревизии каждой строки. При отсутствии `measurement` сохраняется ранее введённое измерение. При `null` оно очищается |
 | `/api/goal` | `goalId, title, target, description, method, curators` | До 30 кураторов. Правка карточки существующей цели поверх HTML |
 | `/api/directory` | `id, name, type, leaderId, aliases` | С `id` обновляется участник, без него создаётся участник. До 20 алиасов. В интерфейсе предусмотрены ДИТ, кластер, команда, продукт и агент |
 | `/api/automation` | `goalId, sourceId, sheet, scopeColumn, valueColumn, headerRow, endRow, period, asOf, scale` | Столбцы различаются, `headerRow` предшествует данным, `endRow` включительно или пусто. `scale=fraction` переводит долю в проценты |
@@ -45,6 +45,8 @@
 | `/api/publish` | Тот же выбор и параметры входа, `token` из предпросмотра | Повторно проверяет подключение, версии и точный состав правок перед коммитом |
 
 При ручном входе `credentials` содержит `username, password`. `credentialRemote` должен совпасть с настроенным HTTPS-адресом. При публикации `goalIds` может быть пустым, если задан `ditPeriod`. `ditPeriod` выбирает все действующие черновики ДИТ этого периода. Предпросмотр возвращает пары старого и нового значения. `token` связывает выбор, черновики и состояние подключения.
+
+Для измерения в `/api/dit-status` передают `method, asOf, plan?` и поля выбранного метода. Для `manual-v1` нужны `fact, unit, reference`. Для `xlsx-cell-v1` нужны `sourceId, sheet, factCell, unit`, возможны `planCell, scale`. Для `xlsx-ratio-v1` нужны `sourceId, sheet, numerator, denominator`, возможны `planCell, scale`. Адреса ячеек имеют вид `G136`. Если указан `planCell`, он имеет приоритет над числовым `plan`. ФИО автора устанавливает сервер из профиля. Ошибка формата или значения оставляет прежнее состояние. Точный формат сохранённой записи указан в [контракте среза](data.md#измерение-дит-и-выгрузка-среза).
 
 ## Браузерные записи
 

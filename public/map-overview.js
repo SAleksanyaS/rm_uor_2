@@ -1,4 +1,4 @@
-import { projectGoalStatuses } from './goal-status.js';
+import { ditValue, projectGoalStatuses } from './goal-status.js';
 
 const emptyTotals = () => ({ assigned: 0, assessed: 0, completed: 0, risk: 0, excel: 0, preliminary: 0 });
 
@@ -42,11 +42,6 @@ function leaderButton(leader, selected, period, { escape }) {
   </button>${leader.assigned ? `<button type="button" class="button compact map-leader-risk${leader.risk ? ' has-risk' : ''}" aria-label="${escape(`${leader.name} · ${risk}`)}" data-action="viz-drill" data-period="${escape(period)}" data-status="Под риском" data-leader="${escape(leader.name)}">${risk}</button>` : ''}</li>`;
 }
 
-function ditValue(value, { escape, numberFormat }) {
-  if (value == null || value === '') return '—';
-  return escape(typeof value === 'number' ? numberFormat.format(value) : value);
-}
-
 function ditTone(status) {
   if (status === 'Выполнено') return 'done';
   if (status === 'Под риском') return 'risk';
@@ -72,8 +67,8 @@ function ditGoal(entry, helpers) {
       ${ditEvidence(entry.rows, helpers)}
     </div>
     <dl class="dit-goal-values">
-      <div><dt>План</dt><dd>${ditValue(entry.plan, helpers)}</dd></div>
-      <div><dt>Факт</dt><dd>${ditValue(entry.fact, helpers)}</dd></div>
+      <div><dt>План</dt><dd>${ditValue(entry.plan, entry.unit, helpers)}</dd></div>
+      <div><dt>Факт</dt><dd>${ditValue(entry.fact, entry.unit, helpers)}</dd></div>
       <div><dt>Статус</dt><dd>${entry.status ? `<span class="badge${tone === 'done' ? ' success' : tone === 'risk' ? ' warning' : ''}">${escape(entry.status)}</span>` : '—'}</dd></div>
     </dl>
   </li>`;
@@ -109,7 +104,7 @@ export function renderDitOverview(entries, period, helpers, visualization = fals
       </header>
     ${goals.length ? `<div class="dit-counts"><strong>Выполнено ${counts.get('Выполнено') ?? 0} из ${goals.length}</strong><button type="button" class="button compact${risk ? ' dit-risk' : ''}" data-action="dit-statuses" data-period="${helpers.escape(selected)}" data-status="Под риском">Под риском ${risk}</button>
       ${categories.slice(2).map(({ label, count }) => `<span class="muted small">${label} · ${count}</span>`).join('')}</div>
-      <p class="muted small">Ручной статус имеет приоритет. Факт ДИТ берётся из итоговой строки Excel.</p>
+      <p class="muted small">Откройте план и факт, чтобы увидеть источник по каждой цели.</p>
       ${visualization ? ditChart(categories, goals.length) : ''}
       <details class="dit-details"${goals.length <= 5 ? ' open' : ''}><summary>План и факт по целям ДИТ</summary>
         <ul class="dit-goals">${goals.map(entry => ditGoal(entry, helpers)).join('')}</ul></details>` : '<p class="muted small">Данные ДИТ за выбранный период отсутствуют.</p>'}
