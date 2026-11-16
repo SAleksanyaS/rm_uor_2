@@ -30,7 +30,7 @@ function sectionRows(sections, sectionLabels, busy, { escape }) {
 
 function renderMeetingForm(model, helpers) {
   const { escape, option } = helpers;
-  const { config = {}, periods = [], leaders = [], sectionLabels, loading } = model;
+  const { config = {}, periods = [], leaders = [], sectionLabels, loading, maturityControls = '' } = model;
   const { period = '', leaderId = '', title = '', note = '', sections = [] } = config;
   const choices = [...new Set([...periods, period].filter(Boolean))];
   return `<form id="meeting-form" class="panel panel-inner stack meeting-form" aria-labelledby="meeting-config-heading">
@@ -46,6 +46,7 @@ function renderMeetingForm(model, helpers) {
       <legend>Разделы и их порядок</legend>
       <ol class="meeting-section-list">${sectionRows(sections, sectionLabels, loading, helpers)}</ol>
     </fieldset>
+    ${maturityControls}
     <div class="actions meeting-layout-actions">
       <button type="button" class="button" data-action="meeting-save"${disabled(loading)}>Сохранить настройки</button>
       <button type="button" class="button ghost" data-action="meeting-reset"${disabled(loading)}>Восстановить стандартные</button>

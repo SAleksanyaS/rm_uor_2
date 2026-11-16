@@ -11,8 +11,9 @@ import { renderDitHistory } from './dit-history-view.js';
 import { renderRiskActionDialog, renderRiskActions } from './risk-actions-view.js';
 import { renderQualityPilot } from './quality-pilot-view.js';
 import { renderRestoreControl, renderRestorePreview } from './restore-view.js';
-import { defaultMeetingConfig, isMeetingPeriod, meetingSections } from './meeting-config.js';
+import { defaultMeetingConfig, isMeetingPeriod, meetingSections, normalizeMeetingConfig } from './meeting-config.js';
 import { renderMeetingToolbar, renderMeetingView } from './meeting-view.js';
+import { renderMeetingMaturity } from './meeting-maturity-view.js';
 
 const sections = [
   {
@@ -89,6 +90,10 @@ let qualityInput = {};
 let qualityRunId = '';
 let restoreFile;
 const meeting = { mode: 'operational', config: null, report: null, reportId: '', input: null, slideIndex: 0, loading: false, error: '' };
+let maturityView = null;
+let maturityLoading = false;
+let maturityError = '';
+let maturityRequest = 0;
 let gitOperation;
 const krFilters = { period: null, status: '', leader: '', query: '', objective: '', goalId: '', page: 0 };
 let reconcileRegister = null;
@@ -849,10 +854,78 @@ function meetingChoices() {
 
 function meetingConfig() {
   const { leaders, periods } = meetingChoices();
-  if (!meeting.config) meeting.config = defaultMeetingConfig(state.meetingTemplate?.config ?? {});
+  if (!meeting.config) meeting.config = normalizeMeetingConfig(state.meetingTemplate?.config ?? {});
   if (!leaders.some(row => row.id === meeting.config.leaderId)) meeting.config.leaderId = '';
   if (!periods.includes(meeting.config.period)) meeting.config.period = periods[0] ?? '';
   return meeting.config;
+}
+
+function maturityEnabled(config) {
+  return config.sections.some(section => section.id === 'maturity' && section.enabled);
+}
+
+function rerenderMaturity() {
+  if (navigate() === 'weekly' && meeting.mode === 'meeting') render();
+}
+
+async function loadMeetingMaturity() {
+  const config = meetingConfig();
+  const token = ++maturityRequest;
+  maturityError = '';
+  maturityLoading = false;
+  const input = structuredClone(config.maturity);
+  if (!maturityEnabled(config) || !input.sourceId) {
+    maturityView = null;
+    rerenderMaturity();
+    return;
+  }
+  maturityLoading = true;
+  rerenderMaturity();
+  try {
+    const data = await post('meeting-maturity', input);
+    if (token === maturityRequest) maturityView = data;
+  } catch (error) {
+    if (token === maturityRequest) {
+      maturityView = null;
+      maturityError = error.message;
+    }
+  } finally {
+    if (token === maturityRequest) {
+      maturityLoading = false;
+      rerenderMaturity();
+    }
+  }
+}
+
+async function uploadMeetingMaturity(file) {
+  if (!file) return;
+  if (!/\.xlsx$/iu.test(file.name) || file.size > 20 * 1024 * 1024) {
+    maturityError = 'Выберите книгу XLSX размером до 20 МиБ.';
+    rerenderMaturity();
+    return;
+  }
+  const token = ++maturityRequest;
+  maturityLoading = true;
+  maturityError = '';
+  rerenderMaturity();
+  try {
+    const next = await request('/api/source', {
+      method: 'POST', headers: { 'x-rmuor': '1', 'x-file-name': encodeURIComponent(file.name), 'content-type': 'application/octet-stream' }, body: file,
+    });
+    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()));
+    const sourceId = [...hash].map(value => value.toString(16).padStart(2, '0')).join('');
+    if (token !== maturityRequest) return;
+    state = next;
+    meetingConfig().maturity = { ...meetingConfig().maturity, sourceId, asOf: '' };
+    await loadMeetingMaturity();
+  } catch (error) {
+    if (token === maturityRequest) maturityError = error.message;
+  } finally {
+    if (token === maturityRequest) {
+      maturityLoading = false;
+      rerenderMaturity();
+    }
+  }
 }
 
 function meetingInput() {
@@ -871,8 +944,22 @@ function updateMeetingFields(form) {
   const values = new FormData(form);
   const selected = new Set(values.getAll('section'));
   const config = meetingConfig();
-  for (const key of ['period', 'leaderId', 'title', 'note']) config[key] = String(values.get(key) ?? '');
+  for (const key of ['period', 'leaderId', 'title', 'note']) if (values.has(key)) config[key] = String(values.get(key));
   config.sections = config.sections.map(row => ({ ...row, enabled: selected.has(row.id) }));
+  const maturity = config.maturity;
+  if (values.has('maturitySourceId') && values.get('maturitySourceId') !== maturity.sourceId) {
+    maturity.sourceId = String(values.get('maturitySourceId'));
+    maturity.asOf = '';
+    return;
+  }
+  if (values.has('maturityAsOf')) maturity.asOf = String(values.get('maturityAsOf'));
+  const links = new Map(maturity.links.map(row => [row.clusterId, row.leaderId]));
+  for (const control of form.querySelectorAll('[data-maturity-cluster]')) {
+    const id = control.dataset.maturityCluster;
+    if (control.value === '@auto') links.delete(id);
+    else links.set(id, control.value);
+  }
+  maturity.links = [...links].map(([clusterId, leaderId]) => ({ clusterId, leaderId }));
 }
 
 async function previewMeeting() {
@@ -995,6 +1082,7 @@ function loadRouteData() {
   if (navigate() === 'weekly') {
     void loadWeekly();
     void loadCuratorWeek();
+    if (meeting.mode === 'meeting' && maturityEnabled(meetingConfig()) && !maturityView && !maturityLoading) void loadMeetingMaturity();
   }
   if (isBrowserPage()) void loadBrowserState();
 }
@@ -1244,9 +1332,14 @@ const pages = {
   settings: renderSettings,
   weekly: () => {
     const toolbar = renderMeetingToolbar(meeting.mode);
-    if (meeting.mode === 'meeting') return heading('Еженедельный отчёт', 'Презентация по выбранным целям и срезам.')
-      + toolbar + renderMeetingView({ ...meeting, ...meetingChoices(), config: meetingConfig(), pending: meetingPending(),
-        sectionLabels: meetingSections }, statusHelpers);
+    if (meeting.mode === 'meeting') {
+      const choices = meetingChoices();
+      const config = meetingConfig();
+      const maturityControls = maturityEnabled(config) ? renderMeetingMaturity({ sources: state.sources, config: config.maturity,
+        maturity: maturityView, leaders: choices.leaders, loading: meeting.loading || maturityLoading, error: maturityError }, statusHelpers) : '';
+      return heading('Еженедельный отчёт', 'Презентация по выбранным целям и срезам.') + toolbar
+        + renderMeetingView({ ...meeting, ...choices, config, pending: meetingPending(), maturityControls, sectionLabels: meetingSections }, statusHelpers);
+    }
     const model = weeklyModel();
     const open = (state.riskActions ?? []).filter(item => item.status !== 'done');
     return renderWeekly({ ...model, toolbar, actionBoard: open.length ? riskBoard(open) : '' }, statusHelpers);
@@ -1263,9 +1356,11 @@ function render() {
   updateShell(page);
   if (!state) return;
   const excelOpen = page === 'weekly' && document.getElementById('weekly-excel')?.open;
+  const mappingsOpen = page === 'weekly' && document.getElementById('meeting-maturity-mapping')?.open;
   document.documentElement.dataset.theme = selectedTheme();
   main.innerHTML = pages[page]();
   if (excelOpen && document.getElementById('weekly-excel')) document.getElementById('weekly-excel').open = true;
+  if (mappingsOpen && document.getElementById('meeting-maturity-mapping')) document.getElementById('meeting-maturity-mapping').open = true;
   unsavedForm = false;
 }
 
@@ -1570,6 +1665,7 @@ document.addEventListener('click', async event => {
       render();
       document.querySelector('[data-action="meeting-tab"][aria-pressed="true"]')?.focus();
       if (meeting.mode === 'meeting' && !meeting.report && !meeting.loading) void previewMeeting();
+      if (meeting.mode === 'meeting' && maturityEnabled(meetingConfig()) && !maturityView && !maturityLoading) void loadMeetingMaturity();
       break;
     case 'meeting-preview':
       await previewMeeting();
@@ -1597,6 +1693,10 @@ document.addEventListener('click', async event => {
     case 'meeting-reset':
       meeting.config = defaultMeetingConfig({ period: meetingConfig().period });
       meeting.error = '';
+      maturityView = null;
+      maturityError = '';
+      maturityLoading = false;
+      maturityRequest++;
       render();
       document.querySelector('[data-action="meeting-reset"]')?.focus();
       break;
@@ -1847,6 +1947,23 @@ document.addEventListener('input', event => {
 
 document.addEventListener('change', async event => {
   const control = event.target;
+  if (control.id === 'meeting-maturity-upload') {
+    const file = control.files[0];
+    control.value = '';
+    await uploadMeetingMaturity(file);
+    return;
+  }
+  if (control.closest('#meeting-form')) {
+    if (control.name === 'maturitySourceId' || (control.name === 'section' && control.value === 'maturity')) {
+      const selector = control.name === 'section' ? '[data-section="maturity"][name="section"]' : '[name="maturitySourceId"]';
+      await loadMeetingMaturity();
+      document.querySelector(selector)?.focus();
+    } else if (control.hasAttribute('data-maturity-cluster')) {
+      rerenderMaturity();
+      [...document.querySelectorAll('[data-maturity-cluster]')].find(item => item.dataset.maturityCluster === control.dataset.maturityCluster)?.focus();
+    }
+    return;
+  }
   if (control.id === 'workspace-restore-file') {
     const file = control.files[0];
     control.value = '';
@@ -2035,6 +2152,10 @@ document.addEventListener('submit', async event => {
         qualityInput = {};
         qualityRunId = '';
         Object.assign(meeting, { config: null, report: null, input: null });
+        maturityView = null;
+        maturityError = '';
+        maturityLoading = false;
+        maturityRequest++;
         await loadStatusRegister();
       }
       break;

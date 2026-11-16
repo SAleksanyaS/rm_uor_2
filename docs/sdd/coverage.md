@@ -19,6 +19,8 @@
 | `src/workspace-restore.mjs`, `public/restore-view.js` | Проверка резервной копии, токен и подтверждение → [восстановление](restore.md) |
 | `src/meeting-report.mjs`, `src/meeting-pptx.mjs`, `public/meeting-config.js` | Модель встречи, проекции, OOXML и настройки → [презентация](meeting-deck.md) |
 | `public/meeting-view.js`, `public/meeting.css` | Конструктор и постраничный предпросмотр |
+| `src/maturity-register.mjs`, `src/maturity-links.mjs` | Иерархия Excel, сверка итогов и соответствия лидерам |
+| `src/meeting-maturity-slides.mjs`, `public/meeting-maturity-view.js` | Слайды зрелости и настройка источника → [Модель зрелости](meeting-deck.md#модель-зрелости-sw261) |
 | `src/shared-git.mjs` | Чтение, проверка удалённой ветки, аутентификация и публикация → [Git](../SDD.md#7-общая-версия-через-git) |
 | `src/visualization-config.mjs` | Проверка вида, фильтров, группировок и периода карточек → [HTTP](http.md#настройка-черновики-и-git) |
 | `src/weekly-curator-parser.mjs`, `src/weekly-curators.mjs` | Даты, группы пунктов, архив и сводка → [отчёты](../SDD.md#6-еженедельный-отчёт-и-браузер) |
@@ -49,6 +51,8 @@
 | `test/workspace-restore.test.mjs` | Совместимость, проверка байтов и привязка токена к превью |
 | `test/meeting-report.test.mjs`, `test/meeting-view.test.mjs` | Полный охват, фильтр, редактирование и показ слайдов |
 | `test/meeting-pptx.test.mjs`, `test/meeting-http.test.mjs` | Структура PPTX, валидность входа, совпадение предпросмотра с экспортом и резервная копия шаблона |
+| `test/maturity-register.test.mjs`, `test/maturity-links.test.mjs` | Иерархия, итоги, пропуски, однозначные и ручные привязки |
+| `test/meeting-maturity-slides.test.mjs`, `test/meeting-maturity-view.test.mjs` | Общий и лидерский охват, пагинация Excel, даты, форма и состояние |
 | `test/imports.test.mjs` | Структурированный HTML, предпросмотр XLSX и повторяемость расчёта ДИТ на двух датированных тестовых книгах |
 | `test/status-register.test.mjs` | Два периода, поля и строки книги, заголовки, дата и повторное применение связей |
 | `test/status-goal-aliases.test.mjs` | Точный контекст формулировок, форматы мер, конфликтующие пороги |
@@ -65,7 +69,7 @@
 
 `RMUOR_REAL_STATUS_XLSX` — путь к реальной книге для дополнительной проверки реестра. `RM_UOR_REAL_BROWSER_TEST=1` включает дополнительный сценарий с локальной тестовой страницей. Для него `RM_UOR_PLAYWRIGHT` задаёт путь к установленному Playwright. `RM_UOR_BROWSER` при необходимости задаёт путь к выбранному Chromium. Эти тесты могут пропускаться в обычном запуске.
 
-Контрольный прогон от 16 ноября 2026 года включил приложенный XLSX, локальные сценарии Git и сценарий Playwright с реальным Chromium. Прошёл 101 тест. Общий и кластерный PowerPoint скачаны в Chrome и проверены отрисовкой всех слайдов. Дополнительно локальный интерфейс проверен через Chrome для карты, истории ДИТ, поручений, пилота и восстановления.
+Контрольный прогон от 16 ноября 2026 года включил приложенный XLSX, локальные сценарии Git и сценарий Playwright с реальным Chromium. Прошло 111 тестов с Excel модели зрелости. Общий и кластерный PowerPoint скачаны в Chrome и проверены отрисовкой всех слайдов. Дополнительно локальный интерфейс проверен через Chrome для карты, истории ДИТ, поручений, пилота и восстановления.
 
 ## Приёмка и ограничения доказательств
 

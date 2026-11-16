@@ -11,8 +11,10 @@ import { appendDitEvent, normalizeDitTimeline, timelineWithCurrent } from './dit
 import { buildQualityPilot } from './quality-pilot.mjs';
 import { saveRiskAction } from './risk-actions.mjs';
 import { parseWorkspaceBackup, workspaceRestoreToken } from './workspace-restore.mjs';
-import { normalizeMeetingConfig } from '../public/meeting-config.js';
+import { normalizeMeetingConfig, normalizeMeetingMaturity } from '../public/meeting-config.js';
 import { buildMeetingReport, meetingReportId } from './meeting-report.mjs';
+import { readMaturityRegister } from './maturity-register.mjs';
+import { resolveMaturityLinks } from './maturity-links.mjs';
 import { projectGoalStatuses } from '../public/goal-status.js';
 import * as nativeGit from './shared-git.mjs';
 
@@ -301,6 +303,7 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
   let connectionGeneration = 0;
   let pendingRefresh;
   const registerCache = new Map();
+  const maturityCache = new Map();
   function serialized(operation) {
     const next = queue.then(operation);
     queue = next.catch(() => {});
@@ -660,12 +663,41 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
         ? await statusRegister(input.previousId, view) : null;
       const curatorWeek = input?.week && !config.leaderId && config.sections.some(item => item.id === 'curators' && item.enabled)
         ? await loadCurators(input.week) : null;
-      const report = buildMeetingReport({ config, state: projected, register: current, previous, curatorWeek });
+      const maturity = config.sections.some(item => item.id === 'maturity' && item.enabled)
+        ? await meetingMaturity(config.maturity, projected) : null;
+      const report = buildMeetingReport({ config, state: projected, register: current, previous, curatorWeek, maturity });
       return { report, reportId: meetingReportId(report) };
     } catch (error) {
       if (error instanceof WorkspaceError) throw error;
       throw new WorkspaceError(safeError(error));
     }
+  }
+
+  async function meetingMaturity(input, projected = getState()) {
+    try {
+      const config = normalizeMeetingMaturity(input);
+      if (!config.sourceId) throw new Error('Выберите или загрузите Excel модели зрелости.');
+      const source = findSource(config.sourceId);
+      if (source.type !== 'xlsx') throw new Error('Для модели зрелости нужна книга XLSX.');
+      if (!maturityCache.has(source.id)) {
+        const { bytes } = await readOriginal(source.id);
+        if (createHash('sha256').update(bytes).digest('hex') !== source.id) throw new Error('Книга отличается от загруженного оригинала.');
+        const parsed = readMaturityRegister(bytes);
+        if (maturityCache.size >= 3) maturityCache.delete(maturityCache.keys().next().value);
+        maturityCache.set(source.id, parsed);
+      }
+      const register = maturityCache.get(source.id);
+      const clusters = resolveMaturityLinks(register.clusters, projected.goals, projected.directory, config.links);
+      return { register, clusters, sourceId: source.id, sourceName: source.name, asOf: config.asOf };
+    } catch (error) {
+      if (error instanceof WorkspaceError) throw error;
+      throw new WorkspaceError(safeError(error));
+    }
+  }
+
+  async function getMeetingMaturity(input) {
+    const { register, clusters, sourceId } = await meetingMaturity(input);
+    return { sheet: register.sheet, totals: register.totals, clusters, sourceId };
   }
 
   async function saveMeetingTemplate(input) {
@@ -1171,9 +1203,10 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
       await commit(next);
       connectionGeneration++;
       registerCache.clear();
+      maturityCache.clear();
       return getState();
     });
   }
 
-  return { getState, execute, importSource, readPreview, statusRegister, statusWeek, readOriginal, backup, restoreBackup, getMeetingReport };
+  return { getState, execute, importSource, readPreview, statusRegister, statusWeek, readOriginal, backup, restoreBackup, getMeetingReport, getMeetingMaturity };
 }

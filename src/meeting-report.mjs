@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { projectDitGoalStatuses, projectGoalStatuses } from '../public/goal-status.js';
 import { isMeetingPeriod, normalizeMeetingConfig } from '../public/meeting-config.js';
+import { buildMaturitySlides } from './meeting-maturity-slides.mjs';
 
 const rangeColumns = [
   { label: 'Цель', width: 3.4 }, { label: 'Статус', width: 1.4 }, { label: 'План', width: 1 },
@@ -132,7 +133,7 @@ function ditAtDate(state, register, period) {
   return projectDitGoalStatuses(state.goals, state.directory, register, [period], [...rows.values()], state.ditExcluded);
 }
 
-export function buildMeetingReport({ config, state, register = null, previous = null, curatorWeek = null }) {
+export function buildMeetingReport({ config, state, register = null, previous = null, curatorWeek = null, maturity = null }) {
   config = normalizeMeetingConfig(config);
   const { period, leaderId } = config;
   if (!isMeetingPeriod(period)) throw new Error('Выберите период презентации.');
@@ -210,6 +211,14 @@ export function buildMeetingReport({ config, state, register = null, previous = 
     actions: () => asTable('Открытые поручения',
       [{ label: 'Задача', width: 2.5 }, { label: 'Ответственный', width: 1.4 }, { label: 'Срок', width: 1 }, { label: 'Следующий шаг', width: 3.2 }],
       actionList.map(action => [action.goalId + '\n' + action.title, action.owner, day(action.dueOn), action.nextAction]), subtitle),
+    maturity: () => {
+      if (!maturity) throw new Error('Выберите Excel модели зрелости.');
+      const selectedClusters = leader ? maturity.clusters.filter(item => item.leaderId === leaderId) : maturity.clusters;
+      return buildMaturitySlides({ register: maturity.register, scopeLabel: scope, selectedClusters,
+        missingClusters: maturity.clusters.filter(item => !item.leaderId).length,
+        automaticClusters: selectedClusters.filter(item => item.method === 'auto').length,
+        sourceName: maturity.sourceName, asOf: maturity.asOf, leaderScoped: Boolean(leader) });
+    },
     appendix: () => asTable(leader ? 'Все цели лидера' : 'Все цели ДИТ', rangeColumns, appendix, subtitle, 'Цели для выбранного охвата отсутствуют.'),
   };
   const omitted = [];

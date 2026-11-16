@@ -21,6 +21,7 @@ const staticFiles = new Map([
   ['/weekly-view.js', ['weekly-view.js', 'text/javascript; charset=utf-8']],
   ['/meeting-config.js', ['meeting-config.js', 'text/javascript; charset=utf-8']],
   ['/meeting-view.js', ['meeting-view.js', 'text/javascript; charset=utf-8']],
+  ['/meeting-maturity-view.js', ['meeting-maturity-view.js', 'text/javascript; charset=utf-8']],
   ['/meeting.css', ['meeting.css', 'text/css; charset=utf-8']],
   ['/visualization-view.js', ['visualization-view.js', 'text/javascript; charset=utf-8']],
   ['/browser-view.js', ['browser-view.js', 'text/javascript; charset=utf-8']],
@@ -115,6 +116,10 @@ async function route(request, response, workspace, getBrowserWorkspace) {
     return json(response, 200, browser.getCuratorWeek(url.searchParams.get('week')));
   }
   if (method === 'POST') {
+    if (url.pathname === '/api/meeting-maturity') {
+      validateWrite(request);
+      return json(response, 200, await workspace.getMeetingMaturity(await readJson(request)));
+    }
     if (url.pathname === '/api/meeting-preview' || url.pathname === '/api/meeting-pptx') {
       validateWrite(request);
       const input = await readJson(request);

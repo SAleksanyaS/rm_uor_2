@@ -6,13 +6,15 @@ export const meetingSections = Object.freeze({
   comparison: 'Изменения между срезами',
   curators: 'Сводка кураторов',
   actions: 'Открытые поручения',
+  maturity: 'Модель зрелости SW26.1',
   appendix: 'Все цели в охвате',
 });
 
 export function defaultMeetingConfig(overrides = {}) {
   return {
     period: '', leaderId: '', title: '', note: '',
-    sections: Object.keys(meetingSections).map(id => ({ id, enabled: id !== 'curators' })),
+    maturity: { sourceId: '', asOf: '', links: [] },
+    sections: Object.keys(meetingSections).map(id => ({ id, enabled: id !== 'curators' && id !== 'maturity' })),
     ...overrides,
   };
 }
@@ -43,5 +45,26 @@ export function normalizeMeetingConfig(input = {}) {
   for (const item of defaultMeetingConfig().sections) if (!used.has(item.id)) ordered.push(item);
   if (!ordered.some(item => item.enabled)) throw new Error('Включите хотя бы один раздел презентации.');
   return { period, leaderId: field(leaderId, 200, 'ИТ-лидер'), title: field(title, 120, 'Название'),
-    note: field(note, 1200, 'Заметка к встрече', true), sections: ordered };
+    note: field(note, 1200, 'Заметка к встрече', true), maturity: normalizeMeetingMaturity(input.maturity), sections: ordered };
+}
+
+export function normalizeMeetingMaturity(input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Проверьте настройки модели зрелости.');
+  const { sourceId = '', asOf = '', links = [] } = input;
+  if (typeof sourceId !== 'string' || (sourceId && !/^[a-f0-9]{64}$/u.test(sourceId))) throw new Error('Выберите книгу модели зрелости.');
+  if (asOf !== '') {
+    const date = new Date(asOf);
+    if (typeof asOf !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(asOf) || !Number.isFinite(+date)
+      || date.toISOString().slice(0, 10) !== asOf) throw new Error('Проверьте дату среза модели зрелости.');
+  }
+  if (!Array.isArray(links) || links.length > 250) throw new Error('Проверьте привязки кластеров.');
+  const confirmed = new Set();
+  const assigned = links.map(item => {
+    const clusterId = field(item?.clusterId, 350, 'Кластер');
+    const leaderId = field(item?.leaderId, 200, 'Лидер кластера');
+    if (!clusterId || confirmed.has(clusterId)) throw new Error('Проверьте уникальность привязок кластеров.');
+    confirmed.add(clusterId);
+    return { clusterId, leaderId };
+  });
+  return { sourceId, asOf, links: assigned };
 }
