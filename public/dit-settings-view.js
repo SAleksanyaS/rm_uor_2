@@ -61,15 +61,15 @@ export function ditExportButton(goalId, period, { escape }) {
   return `<button class="button compact" type="button" data-action="dit-fact-export" data-id="${escape(goalId)}" data-period="${escape(period)}">Скачать JSON</button>`;
 }
 
-export function renderDitReports({ goals, rows, drafts }, helpers) {
+export function renderDitReports({ goals, rows, drafts, history = '' }, helpers) {
   const { escape, heading, empty } = helpers;
   const title = heading('Срезы ДИТ', 'Факт и методика по целям и периодам.');
   const reports = rows.filter(row => row.measurement).sort((a, b) =>
     b.measurement.asOf.localeCompare(a.measurement.asOf) || a.goalId.localeCompare(b.goalId));
-  if (!reports.length) return title + empty('Срезов ДИТ пока нет', 'Укажите факт или рассчитайте его из XLSX в разделе «Статусы ДИТ».');
+  if (!reports.length) return title + `<div class="stack">${history}${empty('Текущих измерений пока нет', 'Укажите факт или рассчитайте его из XLSX в разделе «Статусы ДИТ».')}</div>`;
   const names = new Map(goals.map(goal => [goal.id, goal.title]));
   const local = new Set(drafts.map(row => row.revision));
-  return title + `<div class="stack">${reports.map(row => `<article class="panel panel-inner stack">
+  return title + `<div class="stack">${history}<h2>Текущие измерения</h2>${reports.map(row => `<article class="panel panel-inner stack">
     <div class="headline"><h2>${escape(names.get(row.goalId) ?? row.goalId)}</h2><span class="badge">${local.has(row.revision) ? 'Локальная правка' : 'Опубликовано'}</span></div>
     <p class="reading-meta">${escape(row.goalId)} · ${escape(row.period)}</p>
     <p class="excel-fact"><strong>Факт ${ditValue(row.measurement.fact, row.measurement.unit, helpers)}</strong>
@@ -79,11 +79,11 @@ export function renderDitReports({ goals, rows, drafts }, helpers) {
   </article>`).join('')}</div>`;
 }
 
-function goalRow(goal, manual, pending, helpers) {
+function goalRow(goal, manual, pending, applicable, helpers) {
   const { escape, option } = helpers;
   const initial = manual?.status ?? '';
   const title = goal.objective || goal.goalId;
-  const status = goal.status || 'Нет статуса';
+  const status = applicable ? (goal.status || 'Нет статуса') : 'Не оценивается в этом периоде';
   const tone = status === 'Выполнено' ? ' success' : status === 'Под риском' ? ' warning' : '';
   return `<li class="dit-settings-row">
     <div class="dit-settings-goal">
@@ -93,21 +93,23 @@ function goalRow(goal, manual, pending, helpers) {
         <span>Факт <strong>${ditValue(goal.fact, goal.unit, helpers)}</strong></span>
         <span class="badge${tone}">${escape(status)}</span>
         ${pending ? '<span class="muted small">Черновик</span>' : manual?.status || manual?.measurement ? '<span class="muted small">Опубликовано</span>' : ''}
-        <button type="button" class="button compact" data-action="dit-fact-edit" data-id="${escape(goal.goalId)}">${goal.measurement ? 'Изменить факт' : 'Указать факт'}</button>
+        ${applicable ? `<button type="button" class="button compact" data-action="dit-fact-edit" data-id="${escape(goal.goalId)}">${goal.measurement ? 'Изменить факт' : 'Указать факт'}</button>` : ''}
+        <button type="button" class="button compact" data-action="dit-applicability" data-applicable="${applicable}" data-id="${escape(goal.goalId)}">${applicable ? 'Исключить из периода' : 'Вернуть в период'}</button>
       </div>
     </div>
-    <label class="field dit-settings-field"><span>Статус ДИТ</span><select name="status" aria-label="Статус ДИТ для цели ${escape(title)}"
+    <label class="field dit-settings-field"><span>Статус ДИТ</span><select name="status" aria-label="Статус ДИТ для цели ${escape(title)}"${applicable ? '' : ' disabled'}
         data-dit-goal="${escape(goal.goalId)}" data-revision="${escape(manual?.revision)}" data-initial="${escape(initial)}"${pending ? ' data-pending' : ''}>
       ${statusOptions.map(([value, label]) => option(value, label, initial)).join('')}</select></label>
   </li>`;
 }
 
-export function renderDitSettings({ dit = [], manual = [], period, periods = [], pendingCount = 0, pendingGoals = [], remote = '', manualRefresh = false }, helpers) {
+export function renderDitSettings({ dit = [], manual = [], period, periods = [], pendingCount = 0, pendingGoals = [], excluded = [], remote = '', manualRefresh = false }, helpers) {
   const { escape, heading, option } = helpers;
   const available = [...new Set([...periods, period, ...dit.map(goal => goal.period)].filter(Boolean))];
   const selected = period || available[0] || '';
   const goals = [...new Map(dit.filter(goal => goal.period === selected).map(goal => [goal.goalId, goal])).values()];
   const values = new Map(manual.filter(entry => entry.period === selected).map(entry => [entry.goalId, entry]));
+  const inactive = new Set(excluded.filter(entry => entry.period === selected).map(entry => entry.goalId));
   const title = heading('Статусы ДИТ', 'Задайте статусы целей на уровне ДИТ за выбранный период.',
     remote && manualRefresh ? '<button type="button" class="button" data-action="refresh">Проверить обновления</button>' : '');
   const pending = Number.isSafeInteger(pendingCount) && pendingCount > 0 ? pendingCount : 0;
@@ -120,7 +122,7 @@ export function renderDitSettings({ dit = [], manual = [], period, periods = [],
         ${available.length ? available.map(value => option(value, value, selected)).join('') : option('', 'Нет периодов', '')}</select></label>
     </div>
     <form id="dit-status-form" class="dit-settings-form" data-period="${escape(selected)}">
-      ${goals.length ? `<ul class="dit-settings-rows">${goals.map(goal => goalRow(goal, values.get(goal.goalId), pendingGoals.includes(goal.goalId), helpers)).join('')}</ul>` : '<p class="muted small">За выбранный период целей ДИТ нет.</p>'}
+      ${goals.length ? `<ul class="dit-settings-rows">${goals.map(goal => goalRow(goal, values.get(goal.goalId), pendingGoals.includes(goal.goalId), !inactive.has(goal.goalId), helpers)).join('')}</ul>` : '<p class="muted small">За выбранный период целей ДИТ нет.</p>'}
       <div class="dit-settings-save toolbar">
         <div class="muted small"><p>${publishNote}</p>${pending && !remote ? '<p>Укажите репозиторий в <a href="#settings">настройках Git</a>.</p>' : ''}</div>
         <button type="submit" class="button primary"${goals.length ? '' : ' disabled'}>Сохранить локально</button>

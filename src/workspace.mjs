@@ -1,11 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { extname, isAbsolute, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { openWorkbook, parseGoalMap } from './imports.mjs';
 import { readStatusRegister } from './status-register.mjs';
 import { compareStatusSnapshots, registerKey } from './status-snapshots.mjs';
 import { validateCards } from './visualization-config.mjs';
 import { buildDitMeasurement, normalizeDitMeasurement } from './dit-measurement.mjs';
+import { appendDitEvent, normalizeDitTimeline, timelineWithCurrent } from './dit-timeline.mjs';
+import { buildQualityPilot } from './quality-pilot.mjs';
+import { saveRiskAction } from './risk-actions.mjs';
+import { parseWorkspaceBackup, workspaceRestoreToken } from './workspace-restore.mjs';
 import { projectGoalStatuses } from '../public/goal-status.js';
 import * as nativeGit from './shared-git.mjs';
 
@@ -198,6 +203,7 @@ function normalizeShared(snapshot) {
       goalIds: Array.isArray(entry.goalIds) ? entry.goalIds.map(id => validatedId(id, 'Цель')) : []
     })),
     goals, ditStatuses,
+    ditTimeline: normalizeDitTimeline(snapshot.ditTimeline ?? []),
     checkedAt: now(),
     error: null
   };
@@ -209,6 +215,7 @@ function hasSharedRollback(previous, next) {
     || (next.version === previous.version && !sameResult(previous.goals, next.goals))
     || (next.version === previous.version && !sameResult(previous.ditStatuses ?? [], next.ditStatuses ?? []))
     || (next.version === previous.version && previous.history.length !== next.history.length)
+    || !(previous.ditTimeline ?? []).every((event, index) => sameResult(event, next.ditTimeline?.[index]))
     || !previous.history.every((entry, index) => sameResult(entry, next.history[index]));
 }
 
@@ -323,7 +330,7 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
   function getState() {
     const goalIds = new Set(state.catalog.map(goal => goal.id));
     const activeDitIds = new Set(state.catalog.filter(goal => !excludedDitGoals.has(goal.status)).map(goal => goal.id));
-    const { goals: _published, ditStatuses: sharedDit = [], history, ...shared } = state.shared;
+    const { goals: _published, ditStatuses: sharedDit = [], ditTimeline: _timeline, history, ...shared } = state.shared;
     const ditPublished = sharedDit.filter(row => activeDitIds.has(row.goalId));
     const ditDrafts = state.ditDrafts.filter(row => activeDitIds.has(row.goalId)).map(publicDitStatus);
     const displayedDit = new Map(ditPublished.map(row => [ditStatusKey(row), row]));
@@ -338,6 +345,11 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
       statusSnapshots: datedStatusSources(),
       ditStatuses: [...displayedDit.values()],
       ditPublished, ditDrafts,
+      ditTimeline: ditTimeline(activeDitIds),
+      ditExcluded: (state.ditExcluded ?? []).filter(row => activeDitIds.has(row.goalId)),
+      riskActions: state.riskActions ?? [],
+      qualityReports: state.qualityReports ?? [],
+      restoreConnectionPending: Boolean(state.restoreConnectionPending),
       automations: Object.fromEntries(Object.entries(state.automations).filter(([id]) => goalIds.has(id))),
       visualization: state.visualization ?? { revision: null, cards: null },
       goals: state.catalog.map(goal => ({
@@ -348,6 +360,17 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
         automatic: state.runs[goal.id]?.rows ?? []
       }))
     });
+  }
+
+  function ditTimeline(activeIds) {
+    const published = timelineWithCurrent(state.shared);
+    const byRevision = new Map(published.map(event => [event.revision, { ...event, published: true }]));
+    let local = state.ditTimeline ?? [];
+    for (const row of state.ditDrafts) {
+      if (row.measurement) local = appendDitEvent(local, row, { recordedAt: row.measurement.recordedAt });
+    }
+    for (const event of local) if (!byRevision.has(event.revision)) byRevision.set(event.revision, event);
+    return [...byRevision.values()].filter(event => activeIds.has(event.goalId));
   }
 
   function findSource(id) {
@@ -536,6 +559,7 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
     const rows = new Map(state.ditDrafts.map(row => [ditStatusKey(row), row]));
     const published = new Map((state.shared.ditStatuses ?? []).map(row => [ditStatusKey(row), row]));
     const seen = new Set();
+    let timeline = state.ditTimeline ?? [];
     let changed = false;
     for (const change of input.changes) {
       if (!change || typeof change !== 'object' || Array.isArray(change) || typeof change.status !== 'string') {
@@ -543,6 +567,7 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
       }
       const goal = catalogGoal(change.goalId);
       if (excludedDitGoals.has(goal.status)) throw new WorkspaceError('Статус доступен для действующей цели ДИТ.');
+      if (isDitExcluded(goal.id, period)) throw new WorkspaceError('Верните цель в период перед изменением статуса или факта.');
       if (seen.has(goal.id)) throw new WorkspaceError('Выберите один статус для каждой цели ДИТ.');
       seen.add(goal.id);
 
@@ -569,10 +594,57 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
       const target = remote ? { remote, branch } : null;
       if (status === (current?.status ?? '') && measurement === current?.measurement && (!draft ||
           (sameResult(draft.base, accepted) && sameResult(draft.target, target)))) continue;
-      rows.set(key, { ...publicDitStatus({ ...row, revision: randomUUID(), measurement }), base: accepted, target });
+      const next = publicDitStatus({ ...row, revision: randomUUID(), measurement });
+      rows.set(key, { ...next, base: accepted, target });
+      timeline = appendDitEvent(timeline, next, { previous: current, recordedAt: now() });
       changed = true;
     }
-    if (changed) await commit({ ...state, ditDrafts: [...rows.values()] });
+    if (changed) await commit({ ...state, ditDrafts: [...rows.values()], ditTimeline: timeline });
+  }
+
+  async function setDitApplicability(input) {
+    const goal = catalogGoal(input.goalId);
+    if (!validDitPeriod(input.period) || excludedDitGoals.has(goal.status) || typeof input.applicable !== 'boolean') {
+      throw new WorkspaceError('Выберите действующую цель и отчётный период.');
+    }
+    const excluded = state.ditExcluded ?? [];
+    const matches = row => row.goalId === goal.id && row.period === input.period;
+    const wasApplicable = !excluded.some(matches);
+    if (wasApplicable !== input.expectedApplicable) throw new WorkspaceError('Применимость цели изменилась.', 'CONFLICT', 409);
+    if (input.applicable === wasApplicable) return;
+    const ditExcluded = input.applicable ? excluded.filter(row => !matches(row)) : [...excluded, { goalId: goal.id, period: input.period }];
+    await commit({ ...state, ditExcluded });
+  }
+
+  function isDitExcluded(goalId, period) {
+    return (state.ditExcluded ?? []).some(row => row.goalId === goalId && row.period === period);
+  }
+
+  async function updateRiskAction(input) {
+    if (!input.id) {
+      const goal = catalogGoal(input.goalId);
+      if (!validDitPeriod(input.period) || (input.scopeId !== dit.id && !assignedLeader(goal, input.scopeId))) {
+        throw new WorkspaceError('Проверьте назначение и период риска.');
+      }
+      scopeEntry(input.scopeId);
+      if (input.snapshotId && findSource(input.snapshotId).type !== 'xlsx') throw new WorkspaceError('Срез задачи должен ссылаться на XLSX.');
+    }
+    let riskActions;
+    try { riskActions = saveRiskAction(state.riskActions ?? [], input, { author: requireName() }); }
+    catch (error) { throw new WorkspaceError(safeError(error), error.code, error.status); }
+    await commit({ ...state, riskActions });
+  }
+
+  async function runQualityPilot(input) {
+    catalogGoal('SW26.3');
+    let report;
+    try { report = await buildQualityPilot(input, readOriginal); }
+    catch (error) { throw new WorkspaceError(safeError(error)); }
+    const reports = state.qualityReports ?? [];
+    if (!reports.some(item => item.id === report.id)) {
+      await commit({ ...state, qualityReports: [report, ...reports] });
+    }
+    return report.id;
   }
 
   async function statusWeek({ previousId, currentId, period, mapOnly = false }) {
@@ -668,6 +740,7 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
   async function refresh(input, expectedGeneration) {
     // Only capture and apply state under the write queue. Git I/O stays in the flight promise.
     const flight = await serialized(() => {
+      requireReviewedConnection();
       if (expectedGeneration !== undefined && expectedGeneration !== connectionGeneration) {
         throw new WorkspaceError('Подключение изменилось. Откройте новый просмотр публикации.', 'CONFLICT', 409);
       }
@@ -686,6 +759,12 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
   function requireName() {
     if (!state.profile.name) throw new WorkspaceError('Укажите ФИО в разделе «Настройки».', 'NO_PROFILE', 409);
     return state.profile.name;
+  }
+
+  function requireReviewedConnection() {
+    if (state.restoreConnectionPending) {
+      throw new WorkspaceError('Проверьте репозиторий и сохраните параметры в разделе «Профиль и Git».', 'CONFLICT', 409);
+    }
   }
 
   function withDraft(goalId, row, drafts = state.drafts) {
@@ -723,11 +802,13 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
     if (profile.remote) nativeGit.validateSharedConfig(connection(profile, dataDir));
     const changed = profile.remote !== state.profile.remote || profile.branch !== state.profile.branch;
     const changedAuth = profile.gitAuth !== state.profile.gitAuth || profile.gitExecutable !== state.profile.gitExecutable;
-    await commit({ ...state, profile, shared: changed ? emptyShared() : state.shared });
+    const restoreConnectionPending = Boolean(state.restoreConnectionPending && input.confirmRestoredConnection !== true);
+    await commit({ ...state, profile, shared: changed ? emptyShared() : state.shared, restoreConnectionPending });
     if (changed || changedAuth) connectionGeneration++;
   }
 
   function preparePublication(input) {
+    requireReviewedConnection();
     const author = requireName();
     const config = connection(state.profile, dataDir);
     const credentials = publicationCredentials(input, config);
@@ -769,7 +850,7 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
     }
     const allowedDitGoals = new Map(state.catalog.filter(goal => !excludedDitGoals.has(goal.status)).map(goal => [goal.id, goal]));
     const ditDrafts = ditPeriod ? state.ditDrafts
-      .filter(row => row.period === ditPeriod && allowedDitGoals.has(row.goalId))
+      .filter(row => row.period === ditPeriod && allowedDitGoals.has(row.goalId) && !isDitExcluded(row.goalId, ditPeriod))
       .sort((a, b) => a.goalId.localeCompare(b.goalId)) : [];
     if (ditPeriod && !ditDrafts.length) throw new WorkspaceError('За выбранный период нет сохранённых правок статусов ДИТ.');
     const latestDit = new Map((latest.ditStatuses ?? []).map(row => [ditStatusKey(row), row]));
@@ -818,9 +899,12 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
     await refresh(input, generation);
     return serialized(async () => {
       const { config, credentials, latest, updates, ditUpdates, preview } = verifyPublication(input);
+      const updatedRevisions = new Set(ditUpdates.map(row => row.revision));
+      const ditEvents = (state.ditTimeline ?? []).filter(event => updatedRevisions.has(event.revision));
       const shared = updates.length || ditUpdates.length ? normalizeShared(await git.publishShared(config, {
         expectedRevision: latest.revision, goals: updates, author: preview.author,
-        ...(ditUpdates.length ? { ditStatuses: ditUpdates } : {}), ...(credentials ? { credentials } : {})
+        ...(ditUpdates.length ? { ditStatuses: ditUpdates, ...(ditEvents.length ? { ditEvents } : {}) } : {}),
+        ...(credentials ? { credentials } : {})
       })) : latest;
       const drafts = { ...state.drafts };
       for (const goal of preview.goals) delete drafts[goal.id];
@@ -947,6 +1031,9 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
     snapshot: setStatusDate,
     statuslink: setStatusLink,
     'dit-status': setDitStatuses,
+    'dit-applicability': setDitApplicability,
+    'risk-action': updateRiskAction,
+    'quality-pilot': runQualityPilot,
     async visualization(input) {
       if (input.expectedRevision !== (state.visualization?.revision ?? null)) {
         throw new WorkspaceError('Компоновка изменилась. Проверьте карточки перед сохранением.', 'CONFLICT', 409);
@@ -979,8 +1066,9 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
     if (action === 'publish') return publish(payload);
     return serialized(async () => {
       if (!Object.hasOwn(actions, action)) throw new WorkspaceError('Действие не найдено.', 'NOT_FOUND', 404);
-      await actions[action](payload);
-      return getState();
+      const result = await actions[action](payload);
+      const view = getState();
+      return action === 'quality-pilot' ? { ...view, qualityReportId: result } : view;
     });
   }
 
@@ -996,5 +1084,63 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
     yield ']}';
   }
 
-  return { getState, execute, importSource, readPreview, statusRegister, statusWeek, readOriginal, backup };
+  async function restoreBackup(bytes, token) {
+    const backup = parseWorkspaceBackup(bytes);
+    return serialized(async () => {
+      const expected = workspaceRestoreToken(backup.digest, state);
+      const restored = backup.workspace;
+      const current = state.profile;
+      const changed = restored.profile.remote !== current.remote || restored.profile.branch !== current.branch
+        || restored.profile.gitAuth !== current.gitAuth;
+      const connectionPending = Boolean(restored.profile.remote && (changed || state.restoreConnectionPending));
+      let shared;
+      try {
+        shared = normalizeShared(restored.shared);
+        normalizeDitTimeline(restored.ditTimeline ?? []);
+        const originals = new Map(backup.originals.map(item => [item.id, item.bytes]));
+        const sources = byId(restored.sources);
+        const ids = new Set();
+        for (const report of restored.qualityReports ?? []) {
+          const source = sources.get(report.source?.id);
+          const parsed = await buildQualityPilot({ ...report.recipe, sourceId: source?.id, asOf: report.asOf,
+            period: report.period, sheet: report.source?.sheet, unit: report.unit }, async id => ({ source, bytes: originals.get(id) }));
+          if (ids.has(report.id) || !isDeepStrictEqual(report, parsed)) throw new Error('Отчёт «Года качества» не совпадает с оригиналом.');
+          ids.add(report.id);
+        }
+      } catch (error) { throw new WorkspaceError(safeError(error), 'INVALID_BACKUP', 400); }
+      if (token === undefined) return { token: expected, summary: backup.summary, connectionPending };
+      if (token !== expected) throw new WorkspaceError('Копия или рабочее состояние изменились. Откройте новый предпросмотр.', 'CONFLICT', 409);
+      if (!(await lstat(sourceDir)).isDirectory()) throw new WorkspaceError('Папка источников должна быть обычным каталогом.', 'INVALID_BACKUP');
+      for (const { id, bytes: original } of backup.originals) {
+        const target = join(sourceDir, id);
+        const details = await lstat(target).catch(error => {
+          if (error.code !== 'ENOENT') throw error;
+          return null;
+        });
+        if (details) {
+          const intact = details.isFile() && details.size === original.length
+            && createHash('sha256').update(await readFile(target)).digest('hex') === id;
+          if (!intact) throw new WorkspaceError('Исходник ' + id + ' повреждён в рабочей папке.', 'INVALID_BACKUP', 409);
+          continue;
+        }
+        const temporary = join(sourceDir, '.' + randomUUID() + '.restore');
+        try {
+          await writeFile(temporary, original, { flag: 'wx', mode: 0o600 });
+          await rename(temporary, target);
+        } finally { await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
+      }
+      const { ditStatuses: legacy, ...workspace } = restored;
+      const profile = { gitAuth: 'system', ...restored.profile,
+        gitExecutable: restored.profile.gitExecutable === current.gitExecutable ? current.gitExecutable : '' };
+      const next = await activateLegacyMap({ ...workspace, profile, restoreConnectionPending: connectionPending,
+        shared: { ...shared, checkedAt: restored.shared.checkedAt ?? null, error: restored.shared.error ?? null },
+        ditDrafts: restored.ditDrafts ?? (legacy ?? []).map(row => ({ ...row, base: null, target: null })) }, sourceDir);
+      await commit(next);
+      connectionGeneration++;
+      registerCache.clear();
+      return getState();
+    });
+  }
+
+  return { getState, execute, importSource, readPreview, statusRegister, statusWeek, readOriginal, backup, restoreBackup };
 }

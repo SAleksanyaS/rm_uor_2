@@ -2,9 +2,11 @@ import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
 import { normalizeDitMeasurement } from './dit-measurement.mjs';
+import { appendDitEvent, normalizeDitTimeline, timelineWithCurrent } from './dit-timeline.mjs';
 
 const sharedPath = 'data/rm-uor.json';
 const measurementsPath = 'data/rm-uor-dit-measurements.json';
+const timelinePath = 'data/rm-uor-dit-history.json';
 const sha = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const maxBytes = 8 * 1024 * 1024;
@@ -277,8 +279,11 @@ async function snapshot(config, repo, revision, auth) {
         row.measurement = normalizeDitMeasurement(row.goalId, row.period, item.measurement);
       }
     }
+    const timeline = await snapshotFile(timelinePath, revision, local);
+    if (timeline !== undefined && timeline?.schemaVersion !== 1) throw new Error('Invalid DIT timeline format');
     return { revision, version: data.version, goals: data.goals, history: data.history,
-      ...('ditStatuses' in data ? { ditStatuses: data.ditStatuses } : {}) };
+      ...('ditStatuses' in data ? { ditStatuses: data.ditStatuses } : {}),
+      ...(timeline === undefined ? {} : { ditTimeline: normalizeDitTimeline(timeline.events) }) };
   } catch {
     throw problem('INVALID_SHARED_DATA', 'Файл общей версии повреждён или имеет неподдерживаемый формат.');
   }
@@ -298,7 +303,7 @@ function conflict() {
   return problem('CONFLICT', 'Общая версия изменилась. Обновите её и проверьте черновик перед отправкой.');
 }
 
-export async function publishShared(input, { expectedRevision, goals = [], ditStatuses = [], author, credentials } = {}) {
+export async function publishShared(input, { expectedRevision, goals = [], ditStatuses = [], ditEvents = [], author, credentials } = {}) {
   if ((expectedRevision !== null && (typeof expectedRevision !== 'string' || !sha.test(expectedRevision)))
       || !validGoals(goals) || !validDitStatuses(ditStatuses) || (!goals.length && !ditStatuses.length)
       || typeof author !== 'string' || !author.trim()
@@ -325,6 +330,28 @@ export async function publishShared(input, { expectedRevision, goals = [], ditSt
   if (current.ditStatuses || ditStatuses.length) next.ditStatuses = [...mergedStatuses.values()];
   const snapshotData = next.ditStatuses ? { ...next, ditStatuses: next.ditStatuses.map(({ measurement, ...row }) => row) } : next;
   const files = new Map([[sharedPath, JSON.stringify(snapshotData, null, 2) + '\n']]);
+  if (ditStatuses.length) {
+    const before = new Map((current.ditStatuses ?? []).map(row => [ditStatusKey(row), row]));
+    let events = timelineWithCurrent(current);
+    let observed;
+    try { observed = new Map(normalizeDitTimeline(ditEvents).map(event => [event.revision, event])); }
+    catch { throw problem('INVALID_PUBLICATION', 'Проверьте даты наблюдений ДИТ.'); }
+    for (const row of ditStatuses) {
+      if (/^(?:Q[1-4] 20\d{2}|Y\d{2})$/u.test(row.period)) {
+        const original = observed.get(row.revision);
+        if (original && (ditStatusKey(original) !== ditStatusKey(row) || original.status !== row.status
+          || original.measurement?.id !== row.measurement?.id)) throw problem('INVALID_PUBLICATION', 'Наблюдение не соответствует публикуемой правке.');
+        if (original && !events.some(event => event.revision === original.revision)) events = [...events, original];
+        else events = appendDitEvent(events, row, { previous: before.get(ditStatusKey(row)), recordedAt: publishedAt });
+      }
+    }
+    if (events.length) {
+      try { next.ditTimeline = normalizeDitTimeline(events); }
+      catch { throw problem('INVALID_PUBLICATION', 'Проверьте историю измерений ДИТ.'); }
+      files.set(timelinePath, JSON.stringify({ schemaVersion: 1, events: next.ditTimeline }, null, 2) + '\n');
+    }
+  }
+  if (!next.ditTimeline && current.ditTimeline) next.ditTimeline = current.ditTimeline;
   if (next.ditStatuses?.some(row => row.measurement) || current.ditStatuses?.some(row => row.measurement)) {
     try {
       const measurements = next.ditStatuses.filter(row => row.measurement).map(({ goalId, period, measurement }) =>

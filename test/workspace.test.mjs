@@ -35,6 +35,60 @@ function deferred() {
 const selection = { goalIds: [manual.goalId] };
 const shared = (revision, version = 0, goals = []) => ({ revision, version, history: [], goals });
 
+test('retains dated facts, local applicability and open tasks across a reviewed restore', async t => {
+  const { workspace } = await fixture(t, { async readShared() { return shared('base'); } });
+  const { workspace: copy, dataDir } = await fixture(t, { async readShared() { return shared('base'); } });
+  const period = 'Y26';
+  const goalId = manual.goalId;
+  const save = (asOf, fact, expectedRevision) => workspace.execute('dit-status', { period, changes: [{
+    goalId, status: 'Под риском', expectedRevision,
+    measurement: { method: 'manual-v1', fact, plan: 80, unit: '%', asOf, reference: 'Отчёт' },
+  }] });
+  const initial = await save('2026-11-03', 0, null);
+  const next = await save('2026-11-06', 97, initial.ditDrafts[0].revision);
+  assert.deepEqual(next.ditTimeline.map(event => [event.date, event.measurement.fact]), [
+    ['2026-11-03', 0], ['2026-11-06', 97]
+  ]);
+  const task = await workspace.execute('risk-action', { goalId, period, scopeId: 'dit',
+    title: 'Проверить отклонение', owner: 'Куратор', dueOn: '2026-11-10', status: 'open', nextAction: 'Сверить Teams' });
+  const excluded = await workspace.execute('dit-applicability', { goalId, period, applicable: false, expectedApplicable: true });
+  assert.deepEqual(excluded.ditExcluded, [{ goalId, period }]);
+  await workspace.execute('refresh');
+  await assert.rejects(workspace.execute('publishpreview', { goalIds: [], ditPeriod: period }), /нет сохранённых/iu);
+  await assert.rejects(save('2026-11-10', 99, next.ditDrafts[0].revision), /Верните цель/);
+  const chunks = [];
+  for await (const chunk of workspace.backup()) chunks.push(chunk);
+  const backup = Buffer.from(chunks.join(''));
+  const forged = JSON.parse(backup);
+  forged.workspace.qualityReports = [{ id: 'incomplete' }];
+  await assert.rejects(copy.restoreBackup(Buffer.from(JSON.stringify(forged))), { code: 'INVALID_BACKUP' });
+  forged.workspace.qualityReports = [];
+  forged.workspace.riskActions = [{}];
+  await assert.rejects(copy.restoreBackup(Buffer.from(JSON.stringify(forged))), { code: 'INVALID_BACKUP' });
+  const preview = await copy.restoreBackup(backup);
+  await copy.execute('theme', { theme: 'dark' });
+  await assert.rejects(copy.restoreBackup(backup, preview.token), { code: 'CONFLICT' });
+  await copy.restoreBackup(backup, (await copy.restoreBackup(backup)).token);
+  const restarted = (await openWorkspace({ dataDir })).getState();
+  assert.deepEqual(restarted.ditTimeline, excluded.ditTimeline);
+  assert.deepEqual(restarted.ditExcluded, excluded.ditExcluded);
+  assert.deepEqual(restarted.riskActions, task.riskActions);
+});
+
+test('retains the last published DIT history if the history file is dropped', async t => {
+  let remote = shared('base');
+  const { workspace } = await fixture(t, { async readShared() { return remote; } });
+  const revision = '8e5d0445-4df4-495b-ad09-e997d1fcf359';
+  remote = { ...shared('published', 1), ditTimeline: [{
+    goalId: manual.goalId, period: 'Y26', status: 'В плане', revision, date: '2026-11-06',
+    recordedAt: '2026-11-06T09:00:00.000Z'
+  }] };
+  await workspace.execute('refresh');
+  remote = shared('dropped', 1);
+  await assert.rejects(workspace.execute('refresh'), { code: 'CONFLICT' });
+  assert.equal(workspace.getState().ditTimeline[0].date, '2026-11-06');
+});
+
 test('a verified DIT fact travels with the reviewed status and can be cleared independently', async t => {
   let current = shared('base');
   const git = {

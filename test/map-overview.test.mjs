@@ -101,3 +101,20 @@ test('DIT risk opens the selected DIT period and cluster risk opens only that le
   assert.doesNotMatch(overview, /Назначения по всем лидерам|Редактировать статусы/);
   assert.match(renderDitOverview(dit, period, helpers), /Нет статуса · 1/);
 });
+
+test('DIT completeness treats zero as a fact and reports explicit exclusions separately', () => {
+  const goals = [goal('g', 'a'), goal('skip', 'a'), goal('empty', 'a')];
+  const report = { source: { name: 'Срез.xlsx' }, asOf: '2026-11-03', entries: [], periods: [period] };
+  const dit = projectDitGoalStatuses(goals, directory, report, [period],
+    [{ goalId: 'g', period, status: 'В плане', measurement: { method: 'manual-v1', fact: 0, plan: 80, unit: '%', asOf: '2026-11-06' } }],
+    [{ goalId: 'skip', period }]);
+  const helpers = { escape: value => String(value ?? ''), option: () => '', dateText: value => value, numberFormat: new Intl.NumberFormat('ru-RU') };
+  assert.equal(dit.length, 2);
+  const view = renderMapOverview({ goals, directory, period, periods: [period], register: report, dit,
+    excluded: [{ goalId: 'skip', period }] }, helpers);
+  assert.match(view, /Факт у 1 из 2/);
+  assert.match(view, /Статус у 1 из 2/);
+  assert.match(view, /Не оцениваются · 1/);
+  assert.match(view, /06/);
+  assert.match(view, /03/);
+});

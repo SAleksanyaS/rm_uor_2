@@ -89,10 +89,11 @@ function leaderEvidence(assignments) {
     factBasis: measured ? `Факты лидеров · ${measured} из ${assignments.length}${range ? ` · ${range}` : ''}` : '' };
 }
 
-export function projectDitGoalStatuses(goals, directory, register, periods = register?.periods ?? [], manual = []) {
+export function projectDitGoalStatuses(goals, directory, register, periods = register?.periods ?? [], manual = [], excluded = []) {
   const periodSet = new Set(periods.filter(period => typeof period === 'string' && period.trim()));
   const reports = reportIndex(register?.entries ?? [], periodSet);
   const overrides = new Map(manual.map(entry => [assignmentKey(entry.goalId, 'dit', entry.period), entry]));
+  const notApplicable = new Set(excluded.map(entry => assignmentKey(entry.goalId, 'dit', entry.period)));
   const assignments = new Map();
   for (const entry of projectGoalStatuses(goals, directory, register, [...periodSet])) {
     const key = assignmentKey(entry.goalId, 'dit', entry.period);
@@ -100,7 +101,8 @@ export function projectDitGoalStatuses(goals, directory, register, periods = reg
     assignments.get(key).push(entry);
   }
   const leader = directory.find(item => item.id === 'dit')?.name || 'ДИТ OPS';
-  return goals.filter(goal => !excludedGoals.has(goal.status)).flatMap(goal => [...periodSet].map(period => {
+  return goals.filter(goal => !excludedGoals.has(goal.status)).flatMap(goal => [...periodSet]
+    .filter(period => !notApplicable.has(assignmentKey(goal.id, 'dit', period))).map(period => {
     const key = assignmentKey(goal.id, 'dit', period);
     const direct = reportResult(reports.get(key));
     const evidence = direct.rows.length ? direct : leaderEvidence(assignments.get(key) ?? []);
@@ -110,12 +112,14 @@ export function projectDitGoalStatuses(goals, directory, register, periods = reg
     const plan = measurement ? measurement.plan
       : single?.plan ?? evidence.commonPlan ?? (hasValue(goal.target) ? goal.target : goal.metric) ?? null;
     const fact = measurement?.fact ?? single?.fact ?? null;
+    const factDate = measurement?.asOf ?? (hasValue(single?.fact) ? register?.asOf : null);
     const basis = [override?.status ? 'Ручной статус ДИТ' : '',
       measurement ? (measurement.method === 'manual-v1' ? 'Факт введён вручную' : 'Факт из выбранных ячеек XLSX') : '',
       direct.rows.length ? 'Итоговая строка ДИТ из Excel' : evidence.factBasis,
       !measurement && !hasValue(single?.plan) && !hasValue(evidence.commonPlan) && hasValue(plan) ? 'Цель из карты' : ''].filter(Boolean).join('. ');
     return { id: [goal.id, 'dit', period].map(encodeURIComponent).join(':'), goalId: goal.id, scopeId: 'dit', leader,
-      objective: goal.title, period, plan, fact, basis, unit: measurement?.unit, measurement,
-      status: override?.status || direct.status, rows: evidence.rows };
+      objective: goal.title, period, plan, fact, factDate, basis, unit: measurement?.unit, measurement,
+      status: override?.status || direct.status,
+      statusSourceId: !override?.status && direct.status ? register?.source?.id : undefined, rows: evidence.rows };
   }));
 }

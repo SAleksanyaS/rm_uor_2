@@ -7,15 +7,19 @@ import { renderMapOverview } from './map-overview.js';
 import { ditValue, projectDitGoalStatuses, projectGoalStatuses } from './goal-status.js';
 import { ditExportButton, renderDitFactEditor, renderDitMeasurement, renderDitReports, renderDitSettings } from './dit-settings-view.js';
 import { renderGitAuth } from './git-auth-view.js';
+import { renderDitHistory } from './dit-history-view.js';
+import { renderRiskActionDialog, renderRiskActions } from './risk-actions-view.js';
+import { renderQualityPilot } from './quality-pilot-view.js';
+import { renderRestoreControl, renderRestorePreview } from './restore-view.js';
 
 const sections = [
   {
     label: 'Итоги', icon: 'results',
-    pages: [['map', 'Карта целей'], ['statuses', 'Статусы целей'], ['dit-reports', 'Срезы ДИТ'], ['weekly', 'Еженедельный отчёт'], ['browser-reports', 'Отчёты из браузера'], ['visualization', 'Визуализация'], ['history', 'История']],
+    pages: [['map', 'Карта целей'], ['statuses', 'Статусы целей'], ['dit-reports', 'Срезы ДИТ'], ['weekly', 'Еженедельный отчёт'], ['risk-actions', 'Поручения'], ['browser-reports', 'Отчёты из браузера'], ['visualization', 'Визуализация'], ['history', 'История']],
   },
   {
     label: 'Настройка', icon: 'setup',
-    pages: [['edit', 'Цели и статусы'], ['dit-settings', 'Статусы ДИТ'], ['sources', 'Источники'], ['connectors', 'Браузерные подключения'], ['reconcile', 'Сверка КР'], ['directory', 'Справочники'], ['automation', 'Автоматизация'], ['visualization-builder', 'Конструктор графиков'], ['settings', 'Профиль и Git']],
+    pages: [['edit', 'Цели и статусы'], ['dit-settings', 'Статусы ДИТ'], ['sources', 'Источники'], ['connectors', 'Браузерные подключения'], ['reconcile', 'Сверка КР'], ['directory', 'Справочники'], ['automation', 'Автоматизация'], ['quality-pilot', 'Год качества'], ['visualization-builder', 'Конструктор графиков'], ['settings', 'Профиль и Git']],
   },
 ];
 
@@ -78,6 +82,10 @@ let registerError = '';
 let registerRequest = 0;
 let resultSourceId = '';
 let ditSettingsPeriod = '';
+const ditHistoryFilters = { period: '', earlier: null, later: '' };
+let qualityInput = {};
+let qualityRunId = '';
+let restoreFile;
 let gitOperation;
 const krFilters = { period: null, status: '', leader: '', query: '', objective: '', goalId: '', page: 0 };
 let reconcileRegister = null;
@@ -457,7 +465,7 @@ function mapOverviewMarkup() {
   const overviewRegister = registerError ? null : register;
   const periods = overviewRegister?.periods?.length ? overviewRegister.periods : [period];
   return renderMapOverview({ goals: state.goals, directory: state.directory, period, periods, leaderId: leaderFilter,
-    register: overviewRegister, dit: ditStatuses([period]) }, { escape, option, numberFormat, dateText });
+    register: overviewRegister, dit: ditStatuses([period]), excluded: state.ditExcluded }, { escape, option, numberFormat, dateText });
 }
 
 function updateMapOverview() {
@@ -677,21 +685,24 @@ function renderHistory() {
 
 const statusHelpers = { escape, heading, empty, option, statusLabel, rowBadge, numberFormat, dateText, icon };
 
-function ditStatuses(periods) {
-  return projectDitGoalStatuses(state.goals, state.directory, registerError ? null : register, periods, state.ditStatuses ?? []);
+function ditStatuses(periods, includeExcluded = false) {
+  return projectDitGoalStatuses(state.goals, state.directory, registerError ? null : register, periods, state.ditStatuses ?? [],
+    includeExcluded ? [] : state.ditExcluded ?? []);
 }
 
 function renderDitStatusSettings() {
   const manual = state.ditStatuses ?? [];
   const periods = [...new Set([selectedMapOverviewPeriod(), ...(register?.periods ?? []), ...manual.map(entry => entry.period)])];
   const period = periods.includes(ditSettingsPeriod) ? ditSettingsPeriod : periods[0];
-  const pendingGoals = (state.ditDrafts ?? []).filter(entry => entry.period === period).map(entry => entry.goalId);
-  return renderDitSettings({ dit: ditStatuses([period]), manual, period, periods, pendingCount: pendingGoals.length,
+  const excluded = state.ditExcluded ?? [];
+  const inactive = new Set(excluded.filter(entry => entry.period === period).map(entry => entry.goalId));
+  const pendingGoals = (state.ditDrafts ?? []).filter(entry => entry.period === period && !inactive.has(entry.goalId)).map(entry => entry.goalId);
+  return renderDitSettings({ dit: ditStatuses([period], true), manual, period, periods, pendingCount: pendingGoals.length, excluded: state.ditExcluded ?? [],
     pendingGoals, remote: state.profile.remote, manualRefresh: state.profile.gitAuth === 'prompt' }, statusHelpers);
 }
 
 function ditStatusChanges(form, includeSaved = false) {
-  return [...form.querySelectorAll('[data-dit-goal]')]
+  return [...form.querySelectorAll('[data-dit-goal]:enabled')]
     .filter(control => control.value !== control.dataset.initial || (includeSaved && control.hasAttribute('data-pending')))
     .map(control => ({ goalId: control.dataset.ditGoal, status: control.value, expectedRevision: control.dataset.revision || null }));
 }
@@ -1092,6 +1103,7 @@ function renderSettings() {
         </fieldset>
       </section>
       <section class="panel panel-inner stack"><h2>Локальный профиль</h2>
+        ${state.restoreConnectionPending ? '<p class="inline-error">Проверьте восстановленный адрес и сохраните настройки для включения обмена через Git.</p>' : ''}
         <form id="profile-form" class="form-grid">
           <label class="field"><span>Имя и фамилия</span><input name="name" required maxlength="120" autocomplete="name" value="${escape(profile.name)}"></label>
           <label class="field wide"><span>Адрес общего Git-репозитория</span><input name="remote" maxlength="500" value="${escape(profile.remote)}" placeholder="Адрес репозитория"></label>
@@ -1103,8 +1115,26 @@ function renderSettings() {
           <div class="actions wide"><button type="submit" class="button primary">Сохранить настройки</button><button type="button" class="button" data-action="git-check">Проверить Git</button></div>
         </form>
       </section>
-      <section class="panel panel-inner stack"><h2>Резервная копия</h2><div class="actions"><a class="button" href="/api/backup" download>Скачать данные</a></div></section>
+      <section class="panel panel-inner stack"><h2>Резервная копия</h2><div class="actions"><a class="button" href="/api/backup" download>Скачать данные</a></div>${renderRestoreControl()}</section>
     </div>`;
+}
+
+function riskBoard(actions = state.riskActions ?? []) {
+  return renderRiskActions(actions, statusHelpers, { editable: true, today: today(),
+    goalName: id => state.goals.find(goal => goal.id === id)?.title || id, scopeName: directoryName });
+}
+
+function renderDitReportPage() {
+  const history = renderDitHistory({ events: state.ditTimeline ?? [], goals: state.goals, filters: ditHistoryFilters }, statusHelpers);
+  return renderDitReports({ goals: state.goals, rows: state.ditStatuses, drafts: state.ditDrafts, history }, statusHelpers);
+}
+
+function renderQualityPage() {
+  const runs = state.qualityReports ?? [];
+  const last = runs[0];
+  const known = last ? { ...last.recipe, sourceId: last.source.id, sheet: last.source.sheet, unit: last.unit, period: last.period } : {};
+  return renderQualityPilot({ sources: state.sources, runs, selectedRunId: qualityRunId,
+    input: { period: selectedMapOverviewPeriod(), ...known, ...qualityInput } }, statusHelpers);
 }
 
 const pages = {
@@ -1113,13 +1143,20 @@ const pages = {
   reconcile: () => renderReconciliation(reconciliationModel(), statusHelpers),
   edit: () => renderMap(true),
   'dit-settings': renderDitStatusSettings,
-  'dit-reports': () => renderDitReports({ goals: state.goals, rows: state.ditStatuses, drafts: state.ditDrafts }, statusHelpers),
+  'dit-reports': renderDitReportPage,
+  'risk-actions': () => heading('Поручения', 'Локальные задачи по рискам и решениям со сроком и ответственным.')
+    + '<section class="panel panel-inner">' + riskBoard() + '</section>',
   sources: renderSources,
   directory: renderDirectory,
   automation: renderAutomation,
   history: renderHistory,
   settings: renderSettings,
-  weekly: () => renderWeekly(weeklyModel(), statusHelpers),
+  weekly: () => {
+    const model = weeklyModel();
+    const open = (state.riskActions ?? []).filter(item => item.status !== 'done');
+    return renderWeekly({ ...model, actionBoard: open.length ? riskBoard(open) : '' }, statusHelpers);
+  },
+  'quality-pilot': renderQualityPage,
   visualization: () => renderVisualization(visualizationModel(), statusHelpers),
   'visualization-builder': () => renderVisualizationBuilder(visualizationModel(), statusHelpers),
   connectors: () => renderBrowserConnectors(browserState, statusHelpers),
@@ -1291,6 +1328,12 @@ function post(path, data) {
   });
 }
 
+function requestRestore(path, file, token) {
+  return request('/api/' + path, { method: 'POST', body: file, headers: {
+    'content-type': 'application/json', 'x-rmuor': '1', ...(token ? { 'x-rmuor-restore-token': token } : {})
+  } });
+}
+
 async function saveTheme(control) {
   const choices = [...control.closest('.theme-picker').querySelectorAll('input')];
   const wasFocused = document.activeElement === control;
@@ -1452,6 +1495,32 @@ document.addEventListener('click', async event => {
         break;
       }
       openDitFactEditor(id, form.dataset.period);
+      break;
+    }
+    case 'dit-applicability': {
+      if (ditStatusChanges(trigger.form).length) {
+        showNotice('Сохраните изменения статусов перед сменой применимости.', true);
+        break;
+      }
+      const expectedApplicable = trigger.dataset.applicable === 'true';
+      await run(() => post('dit-applicability', { goalId: id, period: trigger.form.dataset.period,
+        expectedApplicable, applicable: !expectedApplicable }), 'Применимость обновлена');
+      break;
+    }
+    case 'risk-action-create':
+    case 'risk-action-edit': {
+      const item = action === 'risk-action-edit' ? state.riskActions?.find(row => row.id === id) : null;
+      const { goal, scope, period, snapshot, week } = trigger.dataset;
+      const anchor = item ?? { goalId: goal, scopeId: scope, period, snapshotId: snapshot, week };
+      if (!anchor.goalId) break;
+      showDialog(renderRiskActionDialog({ action: item, anchor: { ...anchor,
+        goalTitle: state.goals.find(row => row.id === anchor.goalId)?.title || anchor.goalId,
+        scopeLabel: directoryName(anchor.scopeId) } }, statusHelpers));
+      break;
+    }
+    case 'quality-pilot-export': {
+      const report = state.qualityReports?.find(item => item.id === id);
+      if (report) downloadJson(JSON.stringify(report, null, 2) + '\n', 'year-of-quality-' + report.asOf + '-' + report.id.slice(0, 12) + '.json');
       break;
     }
     case 'dit-fact-export': {
@@ -1636,6 +1705,17 @@ document.addEventListener('input', event => {
 
 document.addEventListener('change', async event => {
   const control = event.target;
+  if (control.id === 'workspace-restore-file') {
+    const file = control.files[0];
+    control.value = '';
+    if (!file) return;
+    restoreFile = file;
+    try {
+      const preview = await requestRestore('restorepreview', file);
+      if (restoreFile === file && navigate() === 'settings' && !dialog.open) showDialog(renderRestorePreview(preview, statusHelpers));
+    } catch (error) { if (restoreFile === file && navigate() === 'settings') showNotice(error.message, true); }
+    return;
+  }
   if (control.form?.id === 'dit-fact-form') {
     if (control.name === 'method') syncDitFactFields(control.form);
     if (control.name === 'sourceId') {
@@ -1662,6 +1742,27 @@ document.addEventListener('change', async event => {
     return;
   }
   switch (control.id) {
+    case 'dit-history-period':
+    case 'dit-history-later':
+    case 'dit-history-earlier': {
+      const name = control.id.slice('dit-history-'.length);
+      ditHistoryFilters[name] = control.value;
+      if (name === 'period') ditHistoryFilters.later = '';
+      if (name !== 'earlier') ditHistoryFilters.earlier = null;
+      render();
+      document.getElementById(control.id)?.focus();
+      break;
+    }
+    case 'quality-pilot-source':
+      qualityInput = { ...Object.fromEntries(new FormData(control.form)), sheet: '' };
+      render();
+      document.getElementById(control.id)?.focus();
+      break;
+    case 'quality-pilot-run':
+      qualityRunId = control.value;
+      render();
+      document.getElementById(control.id)?.focus();
+      break;
     case 'dit-settings-period':
       ditSettingsPeriod = control.value;
       render();
@@ -1776,7 +1877,32 @@ document.addEventListener('submit', async event => {
   event.preventDefault();
   const fields = new FormData(form);
   const body = Object.fromEntries(fields);
-  switch (form.id) {
+  switch (form.getAttribute('id')) {
+    case 'restore-confirm-form': {
+      if (!restoreFile) break;
+      const restored = await run(() => requestRestore('restore', restoreFile, form.dataset.token), 'Рабочие данные восстановлены', { close: true });
+      if (restored) {
+        restoreFile = null;
+        resultSourceId = reconcileSourceId = '';
+        register = reconcileRegister = null;
+        registerError = reconcileError = '';
+        qualityInput = {};
+        qualityRunId = '';
+        await loadStatusRegister();
+      }
+      break;
+    }
+    case 'quality-pilot-form':
+      qualityInput = body;
+      await run(async () => {
+        const next = await post('quality-pilot', { ...body, startRow: Number(body.startRow), endRow: Number(body.endRow) });
+        qualityRunId = next.qualityReportId ?? next.qualityReports[0]?.id;
+        return next;
+      }, 'Срез рассчитан и сохранён');
+      break;
+    case 'risk-action-form':
+      await run(() => post('risk-action', body), 'Локальная задача сохранена', { close: true });
+      break;
     case 'dit-fact-form': {
       let measurement = null;
       if (event.submitter?.value !== 'clear') {
@@ -1848,7 +1974,7 @@ document.addEventListener('submit', async event => {
       break;
     }
     case 'profile-form':
-      await run(() => post('profile', { ...body, refreshMinutes: Number(body.refreshMinutes) }), 'Настройки сохранены');
+      await run(() => post('profile', { ...body, refreshMinutes: Number(body.refreshMinutes), confirmRestoredConnection: true }), 'Настройки сохранены');
       break;
     case 'onboarding-form':
       await run(() => post('profile', { ...state.profile, name: body.name }), 'Имя сохранено', { close: true });

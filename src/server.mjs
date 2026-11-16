@@ -9,6 +9,7 @@ import { createBrowserConnector, validateBrowserConfig } from './browser-connect
 import { BrowserWorkspaceError, openBrowserWorkspace } from './browser-workspace.mjs';
 import { BrowserScenarioError, parseBrowserScenario, serializeBrowserScenario } from './browser-scenario.mjs';
 import * as nativeGit from './shared-git.mjs';
+import { maxWorkspaceBackupBytes } from './workspace-restore.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const staticFiles = new Map([
@@ -26,6 +27,10 @@ const staticFiles = new Map([
   ['/map-overview.js', ['map-overview.js', 'text/javascript; charset=utf-8']],
   ['/goal-status.js', ['goal-status.js', 'text/javascript; charset=utf-8']],
   ['/dit-settings-view.js', ['dit-settings-view.js', 'text/javascript; charset=utf-8']],
+  ['/dit-history-view.js', ['dit-history-view.js', 'text/javascript; charset=utf-8']],
+  ['/risk-actions-view.js', ['risk-actions-view.js', 'text/javascript; charset=utf-8']],
+  ['/quality-pilot-view.js', ['quality-pilot-view.js', 'text/javascript; charset=utf-8']],
+  ['/restore-view.js', ['restore-view.js', 'text/javascript; charset=utf-8']],
   ['/git-auth-view.js', ['git-auth-view.js', 'text/javascript; charset=utf-8']],
   ['/map-overview.css', ['map-overview.css', 'text/css; charset=utf-8']],
   ['/uor-operations.png', ['uor-operations.png', 'image/png']]
@@ -106,6 +111,15 @@ async function route(request, response, workspace, getBrowserWorkspace) {
     return json(response, 200, browser.getCuratorWeek(url.searchParams.get('week')));
   }
   if (method === 'POST') {
+    if (url.pathname === '/api/restorepreview' || url.pathname === '/api/restore') {
+      validateWrite(request);
+      const apply = url.pathname === '/api/restore';
+      const token = apply ? request.headers['x-rmuor-restore-token'] : undefined;
+      if (apply && (typeof token !== 'string' || !/^[a-f0-9]{64}$/u.test(token))) {
+        throw new WorkspaceError('Сначала откройте предпросмотр копии.');
+      }
+      return json(response, 200, await workspace.restoreBackup(await readBody(request, maxWorkspaceBackupBytes), token));
+    }
     if (url.pathname === '/api/browser/scenario') {
       validateWrite(request);
       const input = await readJson(request);
@@ -161,7 +175,7 @@ async function route(request, response, workspace, getBrowserWorkspace) {
       return pipeline(createReadStream(join(root, 'public', file[0])), response);
     }
   }
-  if (method === 'POST' && /^\/api\/(?:[a-z]+|dit-status)$/.test(url.pathname)) {
+  if (method === 'POST' && /^\/api\/[a-z]+(?:-[a-z]+)?$/.test(url.pathname)) {
     validateWrite(request);
     const action = url.pathname.slice(5);
     if (action === 'gitcheck') {
@@ -181,6 +195,7 @@ async function route(request, response, workspace, getBrowserWorkspace) {
 }
 
 function errorStatus(error) {
+  if (error.code === 'INVALID_BACKUP') return error.status;
   if (error instanceof WorkspaceError || error instanceof BrowserWorkspaceError || error instanceof BrowserScenarioError) return error.status;
   if (['CONFLICT', 'GIT_DESTINATION_CHANGED'].includes(error.code)) return 409;
   if (['INVALID_CONFIG', 'INVALID_CREDENTIALS'].includes(error.code)) return 400;
@@ -241,9 +256,9 @@ export async function startServer({
   if (background) {
     let checking = false;
     async function checkShared(force = false) {
-      const { profile, shared } = workspace.getState();
+      const { profile, shared, restoreConnectionPending } = workspace.getState();
       const elapsed = Date.now() - (shared.checkedAt ? Date.parse(shared.checkedAt) : 0);
-      if (checking || !profile.remote || profile.gitAuth === 'prompt' || (!force && elapsed < profile.refreshMinutes * 60000)) return;
+      if (checking || restoreConnectionPending || !profile.remote || profile.gitAuth === 'prompt' || (!force && elapsed < profile.refreshMinutes * 60000)) return;
       checking = true;
       try { await workspace.execute('refresh'); }
       catch { /* Ошибка проверки видна в разделе истории. */ }

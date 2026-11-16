@@ -148,8 +148,10 @@ test('keeps DIT measurements when a legacy checkout publishes only status rows, 
     { method: 'manual-v1', fact: 97, plan: 80, unit: '%', asOf: '2026-11-06', reference: 'Контрольный отчёт' },
     { author: 'Александр', recordedAt: '2026-11-06T10:00:00.000Z' });
   const first = await publishShared(config, {
-    expectedRevision: null, ditStatuses: [{ ...initial, measurement }], author: 'Александр'
+    expectedRevision: null, ditStatuses: [{ ...initial, measurement }],
+    ditEvents: [{ ...initial, measurement, date: '2026-11-06', recordedAt: '2026-11-07T00:00:00.000Z' }], author: 'Александр'
   });
+  assert.equal(first.ditTimeline[0].recordedAt, '2026-11-07T00:00:00.000Z');
   assert.deepEqual((await readShared(config)).ditStatuses[0].measurement, measurement);
   const legacy = join(directory, 'old writer');
   git('clone', remote, legacy);
@@ -166,9 +168,13 @@ test('keeps DIT measurements when a legacy checkout publishes only status rows, 
   const received = await readShared(config);
   assert.notEqual(received.revision, first.revision);
   assert.deepEqual(received.ditStatuses[0], { ...revised, measurement });
+  assert.deepEqual(received.ditTimeline, first.ditTimeline);
   const cleared = { ...revised, revision: '7de445b0-a543-4c6a-a9ee-318b3b5fdd20' };
   await publishShared(config, { expectedRevision: received.revision, ditStatuses: [cleared], author: 'Александр' });
-  assert.deepEqual((await readShared(config)).ditStatuses, [cleared]);
+  const latest = await readShared(config);
+  assert.deepEqual(latest.ditStatuses, [cleared]);
+  assert.equal(latest.ditTimeline.length, 2);
+  assert.deepEqual(latest.ditTimeline[0], first.ditTimeline[0]);
 });
 
 test('checks configured portable Git and gives a diagnostic when it is missing', async t => {

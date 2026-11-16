@@ -1,4 +1,5 @@
 import { ditValue } from './goal-status.js';
+import { renderRiskActionCreateButton } from './risk-actions-view.js';
 
 const pageSize = 25;
 
@@ -77,7 +78,7 @@ function statusChips(entries, selected, helpers) {
     </button>`).join('')}${unknown ? `<span class="muted small">Нет статуса · ${unknown}</span>` : ''}</div>`;
 }
 
-function tableRow(entry, helpers) {
+function tableRow(entry, helpers, sourceId) {
   const { escape, rowBadge } = helpers;
   const status = entry.status ? (rowBadge(entry) || escape(statusName(entry.status, helpers))) : '<span class="muted small">Нет статуса</span>';
   const rows = entry.rows ?? [];
@@ -96,7 +97,9 @@ function tableRow(entry, helpers) {
       <p class="muted small">${escape(entry.goalId)}</p><p class="muted small kr-mobile-period">${mobileMetrics}</p></td>
     <td>${dit ? 'Весь ДИТ' : display(entry.leader, helpers)}</td>
     ${metrics}
-    <td>${status}</td>
+    <td>${status}${entry.status === 'Под риском' ? `<div class="actions">${renderRiskActionCreateButton({
+      goalId: entry.goalId, scopeId: entry.scopeId, period: entry.period, snapshotId: dit ? entry.statusSourceId : sourceId
+    }, helpers)}</div>` : ''}</td>
   </tr>`;
 }
 
@@ -123,7 +126,7 @@ export function renderStatusRows(model, helpers) {
   return `${chips}
     <div class="table-wrap"><table class="kr-table" aria-label="Статусы целей ${dit ? 'по ДИТ' : 'по ИТ-лидерам'}"><thead><tr>
       <th scope="col">Цель</th><th scope="col">${dit ? 'Уровень' : 'ИТ-лидер'}</th><th class="kr-secondary" scope="col">План</th><th class="kr-secondary" scope="col">Текущий факт</th><th scope="col">Статус</th>
-    </tr></thead><tbody>${shown.map(entry => tableRow(entry, helpers)).join('')}</tbody></table></div>
+    </tr></thead><tbody>${shown.map(entry => tableRow(entry, helpers, register.source?.id)).join('')}</tbody></table></div>
     <div class="kr-pagination toolbar"><span class="muted small">${start + 1}–${start + shown.length} из ${entries.length}</span>
       ${lastPage ? `<button type="button" class="button compact" data-action="kr-page" data-page="${page - 1}"${page === 0 ? ' disabled' : ''}>Назад</button>
         <button type="button" class="button compact" data-action="kr-page" data-page="${page + 1}"${page === lastPage ? ' disabled' : ''}>Далее</button>` : ''}</div>`;

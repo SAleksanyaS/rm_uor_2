@@ -64,6 +64,7 @@ function ditGoal(entry, helpers) {
     <div class="dit-goal-main"><strong>${escape(entry.objective || entry.goalId)}</strong>
       ${entry.goalId ? `<p class="muted small">${escape(entry.goalId)}</p>` : ''}
       ${entry.basis ? `<p class="muted small dit-basis">${escape(entry.basis)}</p>` : ''}
+      ${entry.factDate && helpers.dateText ? `<p class="muted small">Факт от ${escape(helpers.dateText(entry.factDate))}</p>` : ''}
       ${ditEvidence(entry.rows, helpers)}
     </div>
     <dl class="dit-goal-values">
@@ -111,21 +112,27 @@ export function renderDitOverview(entries, period, helpers, visualization = fals
   </section>`;
 }
 
-export function renderMapOverview({ goals, directory, period, periods, leaderId, register, dit }, helpers) {
+export function renderMapOverview({ goals, directory, period, periods, leaderId, register, dit = [], excluded = [] }, helpers) {
   const { escape, option, dateText } = helpers;
   const { leaders } = summarizeMap(goals, directory, period, register?.entries);
-  const bookUsed = leaders.some(leader => leader.excel || leader.preliminary);
-  const source = bookUsed && register?.source?.name ? `${register.source.name} · ${register.asOf ? `срез от ${dateText(register.asOf)}` : 'дата среза не указана'}` : '';
+  const source = register?.source?.name ? `Excel · ${register.asOf ? `срез от ${dateText(register.asOf)}` : 'дата среза не указана'} · ${register.source.name}` : 'Excel · книга для среза не выбрана';
+  const current = dit.filter(entry => entry.period === period);
+  const dates = [...new Set(current.map(entry => entry.factDate ?? entry.measurement?.asOf).filter(Boolean))].sort();
+  const completeness = current.filter(entry => entry.fact != null && entry.fact !== '').length;
+  const assessed = current.filter(entry => entry.status).length;
+  const inactive = new Set(excluded.filter(row => row.period === period).map(row => row.goalId)).size;
+  const ditDates = dates.length && dateText ? ' · факты от ' + [...new Set([dates[0], dates.at(-1)])].map(dateText).join(' — ') : '';
   return `<section class="panel panel-inner map-overview" aria-labelledby="map-overview-title">
     <header class="map-overview-head"><div><h2 id="map-overview-title">Статусы целей</h2>
       <p class="muted small">Цели в карте · ${goals.length} / Лидеры · ${leaders.length}</p></div>
       <label class="field map-overview-period"><span>Период обзора</span><select id="map-overview-period">${periods.map(value => option(value, value, period)).join('')}</select></label>
     </header>
+    <p class="map-overview-source muted small">${escape(source)}</p>
+    <p class="muted small">Факт у ${completeness} из ${current.length} · Статус у ${assessed} из ${current.length}${inactive ? ` · Не оцениваются · ${inactive}` : ''}${escape(ditDates)}</p>
     ${renderDitOverview(dit, period, helpers)}
     <div class="dit-heading"><h3>Результаты по ИТ-лидерам</h3>
       ${leaderId ? '<button type="button" class="button compact" data-action="map-leader" data-id="">Все цели</button>' : ''}
     </div>
-    ${source ? `<p class="map-overview-source muted small">${escape(source)}</p>` : ''}
     ${leaders.length ? `<ul class="map-leaders" aria-label="Статусы целей по лидерам">${leaders.map(leader => leaderButton(leader, leaderId, period, helpers)).join('')}</ul>` : '<p class="muted small">В карте ещё нет назначений по лидерам.</p>'}
     <details class="map-overview-method"><summary>Как считаются статусы</summary>
       <p>Каждая цель учитывается один раз у каждого назначенного лидера. Статус берётся из подтверждённых связей с Excel или из единственного предварительного совпадения. Если связанных строк несколько, явный риск учитывается сразу, а для выполнения нужны выполненные КР во всех строках.</p>

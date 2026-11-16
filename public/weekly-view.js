@@ -1,3 +1,5 @@
+import { renderRiskActionCreateButton } from './risk-actions-view.js';
+
 const fieldLabels = {
   plan: 'План',
   fact: 'Факт',
@@ -58,12 +60,15 @@ function statusText(value, { escape, statusLabel }) {
 
 function sourceRow(entry, snapshot, helpers) {
   const { escape, rowBadge } = helpers;
+  const task = ['Под риском', 'Есть риски'].includes(entry.status) && entry.goalId && entry.scopeId
+    ? renderRiskActionCreateButton({ goalId: entry.goalId, scopeId: entry.scopeId, period: entry.period,
+      snapshotId: snapshot?.source?.id, week: helpers.week }, helpers) : '';
   return `<div class="history-row">
     <div><strong>${escape(entry.keyResult || 'КР без названия')}</strong>
       ${entry.leader ? `<p class="small muted">${escape(entry.leader)}</p>` : ''}
       <p class="small muted">${evidence(entry, snapshot, helpers)}</p>
     </div>
-    ${entry.status ? rowBadge({ status: entry.status }) : ''}
+    <div class="actions">${entry.status ? rowBadge({ status: entry.status }) : ''}${task}</div>
   </div>`;
 }
 
@@ -79,6 +84,10 @@ function valueText(name, value, helpers) {
 function changeRow(pair, report, helpers, includeFields = false) {
   const { escape } = helpers;
   const entry = pair.current ?? pair.previous;
+  const active = pair.current;
+  const task = active?.goalId && active.scopeId && ['Под риском', 'Есть риски'].includes(active.status)
+    ? renderRiskActionCreateButton({ goalId: active.goalId, scopeId: active.scopeId, period: active.period,
+      snapshotId: report.current?.source?.id, week: helpers.week }, helpers) : '';
   const side = (label, row, snapshot) => `<p class="small muted">${label} · ${row
     ? `${statusText(row.status, helpers)} · ${evidence(row, snapshot, helpers)}`
     : 'Строка отсутствует в срезе'} </p>`;
@@ -87,6 +96,7 @@ function changeRow(pair, report, helpers, includeFields = false) {
     ${entry.leader ? `<p class="small muted">${escape(entry.leader)}</p>` : ''}
     ${side('Было', pair.previous, report.previous)}
     ${side('Стало', pair.current, report.current)}
+    ${task ? `<div class="actions">${task}</div>` : ''}
     ${includeFields ? (pair.fields ?? []).map(field => `<p class="small">${escape(fieldLabels[field.name] ?? field.name)}
       · ${valueText(field.name, field.previous, helpers)} → ${valueText(field.name, field.current, helpers)}</p>`).join('') : ''}
   </div></div>`;
@@ -261,6 +271,7 @@ export function renderWeekly(model, helpers) {
   return `${title}<div class="weekly-page stack">
     ${weekControls(model, helpers)}
     ${curatorReport(model, helpers)}
-    ${excelReport(model, helpers)}
+    ${excelReport(model, { ...helpers, week: model.week })}
+    ${model.actionBoard ? `<section class="panel panel-inner stack"><h2>Открытые поручения</h2>${model.actionBoard}</section>` : ''}
   </div>`;
 }

@@ -16,6 +16,8 @@
 | `GET /api/source/<sha>/file` | SHA-256 в пути | Исходные байты с именем оригинала как вложение |
 | `POST /api/source` | Сырые байты HTML/XLSX, имя в `x-file-name` с URL-кодированием | Обновлённое рабочее состояние |
 | `GET /api/backup` | — | Поток JSON как `rm-uor-backup.json` |
+| `POST /api/restorepreview` | Байты резервной копии JSON, заголовок `x-rmuor: 1` | Проверенная сводка, флаг отложенного включения Git и токен |
+| `POST /api/restore` | Те же байты JSON, `x-rmuor: 1` и `x-rmuor-restore-token` | Полная замена бизнес-состояния после проверки токена. До 128 МиБ для обоих запросов |
 | `GET /api/browser` | — | `connectors, jobs, reports, recordings, openProfiles` |
 | `GET /api/curator-week` | `week` в формате `YYYY-MM-DD`, строго понедельник | `week, weeks, summary, curators`. Карточка содержит `name, url, sections` и возможный `range`. `sections: null` при пропуске |
 
@@ -33,6 +35,9 @@
 | `/api/statuslink` | `sourceId, entryId, goalId, scopeId, expectedRevision` | Связь однозначной строки. `goalId: null` фиксирует отсутствие связи. `scopeId` необязателен, при выборе нужен назначенный лидер |
 | `/api/status` | `goalId, scopeId, period, value, status, plan, comment, risk, asOf, expectedRevision` | Черновик результата. `value` допускает `null` или число от 0 до 1 000 000. Ревизия относится к общей версии. Нужны ФИО, существующая цель и участник |
 | `/api/dit-status` | `period, changes: [{goalId, status, expectedRevision, measurement?}]` | До 200 уникальных действующих целей. Поддерживаются квартал и год. Пустой `status` снимает переопределение статуса. Проверяются ревизии каждой строки. При отсутствии `measurement` сохраняется ранее введённое измерение. При `null` оно очищается |
+| `/api/dit-applicability` | `goalId, period, applicable, expectedApplicable` | Локальная применимость. Конфликт, если предыдущее значение изменилось |
+| `/api/risk-action` | `id?, expectedRevision?, goalId, scopeId, period, snapshotId?, week?, title, owner, dueOn, nextAction, status` | Создаёт или обновляет локальную задачу. Привязка существующей задачи сохраняется |
+| `/api/quality-pilot` | `sourceId, period, asOf, sheet, startRow, endRow, teamColumn, thresholdColumn, durationColumn, unit` | Вычисляет, сохраняет и возвращает состояние с `qualityReportId`. Точный повтор не дублирует отчёт |
 | `/api/goal` | `goalId, title, target, description, method, curators` | До 30 кураторов. Правка карточки существующей цели поверх HTML |
 | `/api/directory` | `id, name, type, leaderId, aliases` | С `id` обновляется участник, без него создаётся участник. До 20 алиасов. В интерфейсе предусмотрены ДИТ, кластер, команда, продукт и агент |
 | `/api/automation` | `goalId, sourceId, sheet, scopeColumn, valueColumn, headerRow, endRow, period, asOf, scale` | Столбцы различаются, `headerRow` предшествует данным, `endRow` включительно или пусто. `scale=fraction` переводит долю в проценты |
