@@ -11,6 +11,8 @@ import { appendDitEvent, normalizeDitTimeline, timelineWithCurrent } from './dit
 import { buildQualityPilot } from './quality-pilot.mjs';
 import { saveRiskAction } from './risk-actions.mjs';
 import { parseWorkspaceBackup, workspaceRestoreToken } from './workspace-restore.mjs';
+import { normalizeMeetingConfig } from '../public/meeting-config.js';
+import { buildMeetingReport, meetingReportId } from './meeting-report.mjs';
 import { projectGoalStatuses } from '../public/goal-status.js';
 import * as nativeGit from './shared-git.mjs';
 
@@ -349,6 +351,7 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
       ditExcluded: (state.ditExcluded ?? []).filter(row => activeDitIds.has(row.goalId)),
       riskActions: state.riskActions ?? [],
       qualityReports: state.qualityReports ?? [],
+      meetingTemplate: state.meetingTemplate ?? { revision: null, config: null },
       restoreConnectionPending: Boolean(state.restoreConnectionPending),
       automations: Object.fromEntries(Object.entries(state.automations).filter(([id]) => goalIds.has(id))),
       visualization: state.visualization ?? { revision: null, cards: null },
@@ -645,6 +648,35 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
       await commit({ ...state, qualityReports: [report, ...reports] });
     }
     return report.id;
+  }
+
+  async function getMeetingReport(input, loadCurators) {
+    const view = state;
+    const projected = getState();
+    try {
+      const config = normalizeMeetingConfig(input?.config);
+      const current = await statusRegister(input?.sourceId || undefined, view);
+      const previous = input?.previousId && config.sections.some(item => item.id === 'comparison' && item.enabled)
+        ? await statusRegister(input.previousId, view) : null;
+      const curatorWeek = input?.week && !config.leaderId && config.sections.some(item => item.id === 'curators' && item.enabled)
+        ? await loadCurators(input.week) : null;
+      const report = buildMeetingReport({ config, state: projected, register: current, previous, curatorWeek });
+      return { report, reportId: meetingReportId(report) };
+    } catch (error) {
+      if (error instanceof WorkspaceError) throw error;
+      throw new WorkspaceError(safeError(error));
+    }
+  }
+
+  async function saveMeetingTemplate(input) {
+    if (input.expectedRevision !== (state.meetingTemplate?.revision ?? null)) {
+      throw new WorkspaceError('Шаблон изменился. Проверьте сохранённую версию.', 'CONFLICT', 409);
+    }
+    let config;
+    try { config = normalizeMeetingConfig({ ...input.config, period: '', note: '' }); }
+    catch (error) { throw new WorkspaceError(safeError(error)); }
+    if (config.leaderId && scopeEntry(config.leaderId).type !== 'leader') throw new WorkspaceError('Выберите ИТ-лидера.');
+    await commit({ ...state, meetingTemplate: { revision: randomUUID(), config } });
   }
 
   async function statusWeek({ previousId, currentId, period, mapOnly = false }) {
@@ -1034,6 +1066,7 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
     'dit-applicability': setDitApplicability,
     'risk-action': updateRiskAction,
     'quality-pilot': runQualityPilot,
+    'meeting-template': saveMeetingTemplate,
     async visualization(input) {
       if (input.expectedRevision !== (state.visualization?.revision ?? null)) {
         throw new WorkspaceError('Компоновка изменилась. Проверьте карточки перед сохранением.', 'CONFLICT', 409);
@@ -1142,5 +1175,5 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
     });
   }
 
-  return { getState, execute, importSource, readPreview, statusRegister, statusWeek, readOriginal, backup, restoreBackup };
+  return { getState, execute, importSource, readPreview, statusRegister, statusWeek, readOriginal, backup, restoreBackup, getMeetingReport };
 }

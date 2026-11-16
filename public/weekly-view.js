@@ -268,7 +268,7 @@ function curatorReport(model, helpers) {
 
 export function renderWeekly(model, helpers) {
   const title = helpers.heading('Еженедельный отчёт', 'Сводка кураторов за выбранную неделю.');
-  return `${title}<div class="weekly-page stack">
+  return `${title}${model.toolbar ?? ''}<div class="weekly-page stack">
     ${weekControls(model, helpers)}
     ${curatorReport(model, helpers)}
     ${excelReport(model, { ...helpers, week: model.week })}

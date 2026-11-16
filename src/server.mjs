@@ -10,6 +10,7 @@ import { BrowserWorkspaceError, openBrowserWorkspace } from './browser-workspace
 import { BrowserScenarioError, parseBrowserScenario, serializeBrowserScenario } from './browser-scenario.mjs';
 import * as nativeGit from './shared-git.mjs';
 import { maxWorkspaceBackupBytes } from './workspace-restore.mjs';
+import { renderMeetingPptx } from './meeting-pptx.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const staticFiles = new Map([
@@ -18,6 +19,9 @@ const staticFiles = new Map([
   ['/status-view.js', ['status-view.js', 'text/javascript; charset=utf-8']],
   ['/reconciliation-view.js', ['reconciliation-view.js', 'text/javascript; charset=utf-8']],
   ['/weekly-view.js', ['weekly-view.js', 'text/javascript; charset=utf-8']],
+  ['/meeting-config.js', ['meeting-config.js', 'text/javascript; charset=utf-8']],
+  ['/meeting-view.js', ['meeting-view.js', 'text/javascript; charset=utf-8']],
+  ['/meeting.css', ['meeting.css', 'text/css; charset=utf-8']],
   ['/visualization-view.js', ['visualization-view.js', 'text/javascript; charset=utf-8']],
   ['/browser-view.js', ['browser-view.js', 'text/javascript; charset=utf-8']],
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
@@ -111,6 +115,31 @@ async function route(request, response, workspace, getBrowserWorkspace) {
     return json(response, 200, browser.getCuratorWeek(url.searchParams.get('week')));
   }
   if (method === 'POST') {
+    if (url.pathname === '/api/meeting-preview' || url.pathname === '/api/meeting-pptx') {
+      validateWrite(request);
+      const input = await readJson(request);
+      const download = url.pathname === '/api/meeting-pptx';
+      if (download && (typeof input?.reportId !== 'string' || !/^[a-f0-9]{64}$/u.test(input.reportId))) {
+        throw new WorkspaceError('Сначала обновите предпросмотр презентации.');
+      }
+      const preview = await workspace.getMeetingReport(input, async week => {
+        try { return (await getBrowserWorkspace()).getCuratorWeek(week); }
+        catch { return null; }
+      });
+      if (!download) return json(response, 200, preview);
+      if (preview.reportId !== input.reportId) {
+        throw new WorkspaceError('Данные отчёта изменились. Обновите предпросмотр.', 'STALE_VIEW', 409);
+      }
+      const bytes = renderMeetingPptx(preview.report);
+      const title = (preview.report.title + ' — ' + preview.report.subtitle).replace(/[<>:"/\\|?*]/gu, ' ')
+        .replace(/\s+/gu, ' ').slice(0, 160).toWellFormed().trim();
+      response.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'Content-Disposition': attachment((title || 'Статусы целей ДИТ') + '.pptx'),
+        'Content-Length': bytes.length
+      });
+      return response.end(bytes);
+    }
     if (url.pathname === '/api/restorepreview' || url.pathname === '/api/restore') {
       validateWrite(request);
       const apply = url.pathname === '/api/restore';

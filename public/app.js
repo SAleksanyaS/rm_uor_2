@@ -11,6 +11,8 @@ import { renderDitHistory } from './dit-history-view.js';
 import { renderRiskActionDialog, renderRiskActions } from './risk-actions-view.js';
 import { renderQualityPilot } from './quality-pilot-view.js';
 import { renderRestoreControl, renderRestorePreview } from './restore-view.js';
+import { defaultMeetingConfig, isMeetingPeriod, meetingSections } from './meeting-config.js';
+import { renderMeetingToolbar, renderMeetingView } from './meeting-view.js';
 
 const sections = [
   {
@@ -86,6 +88,7 @@ const ditHistoryFilters = { period: '', earlier: null, later: '' };
 let qualityInput = {};
 let qualityRunId = '';
 let restoreFile;
+const meeting = { mode: 'operational', config: null, report: null, reportId: '', input: null, slideIndex: 0, loading: false, error: '' };
 let gitOperation;
 const krFilters = { period: null, status: '', leader: '', query: '', objective: '', goalId: '', page: 0 };
 let reconcileRegister = null;
@@ -836,8 +839,92 @@ function weeklyModel() {
   return { ...weekly, ...curatorWeekly, week: curatorWeekly.week || weekMonday(today()), snapshots: state.statusSnapshots ?? [] };
 }
 
+function meetingChoices() {
+  const ids = new Set(state.goals.flatMap(goal => goal.assignments.filter(row => row.active !== false).map(row => row.leaderId)));
+  const leaders = state.directory.filter(row => row.type === 'leader' && ids.has(row.id));
+  const periods = [...new Set([weekly.period, ...(register?.periods ?? []), ...state.ditStatuses.map(row => row.period),
+    ...state.statusSnapshots.flatMap(row => row.periods), selectedMapOverviewPeriod()].filter(isMeetingPeriod))];
+  return { leaders, periods };
+}
+
+function meetingConfig() {
+  const { leaders, periods } = meetingChoices();
+  if (!meeting.config) meeting.config = defaultMeetingConfig(state.meetingTemplate?.config ?? {});
+  if (!leaders.some(row => row.id === meeting.config.leaderId)) meeting.config.leaderId = '';
+  if (!periods.includes(meeting.config.period)) meeting.config.period = periods[0] ?? '';
+  return meeting.config;
+}
+
+function meetingInput() {
+  const config = meetingConfig();
+  const dated = state.statusSnapshots.find(row => row.id === weekly.currentId && row.periods.includes(config.period));
+  const sourceId = dated?.id || (register?.periods?.includes(config.period) ? register.source?.id : '') || '';
+  const earlier = dated && state.statusSnapshots.find(row => row.id === weekly.previousId && row.asOf < dated.asOf && row.periods.includes(config.period));
+  return { config, sourceId, previousId: earlier?.id || '', week: weeklyModel().week };
+}
+
+function meetingPending() {
+  return JSON.stringify(meeting.input) !== JSON.stringify(meetingInput());
+}
+
+function updateMeetingFields(form) {
+  const values = new FormData(form);
+  const selected = new Set(values.getAll('section'));
+  const config = meetingConfig();
+  for (const key of ['period', 'leaderId', 'title', 'note']) config[key] = String(values.get(key) ?? '');
+  config.sections = config.sections.map(row => ({ ...row, enabled: selected.has(row.id) }));
+}
+
+async function previewMeeting() {
+  if (meeting.loading || !meetingConfig().period) return;
+  const input = structuredClone(meetingInput());
+  meeting.loading = true;
+  meeting.error = '';
+  render();
+  try {
+    const next = await post('meeting-preview', input);
+    Object.assign(meeting, { ...next, input, slideIndex: 0 });
+  } catch (error) {
+    meeting.error = error.message;
+  } finally {
+    meeting.loading = false;
+    if (navigate() === 'weekly' && meeting.mode === 'meeting') {
+      render();
+      document.querySelector('[data-action="meeting-preview"]')?.focus();
+    }
+  }
+}
+
+async function exportMeeting() {
+  if (meeting.loading || !meeting.reportId || meetingPending()) return;
+  meeting.loading = true;
+  meeting.error = '';
+  render();
+  try {
+    const response = await fetch('/api/meeting-pptx', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-rmuor': '1' },
+      body: JSON.stringify({ ...meeting.input, reportId: meeting.reportId })
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      if (error.code === 'STALE_VIEW') meeting.input = null;
+      throw new Error(error.error || 'Не удалось скачать презентацию.');
+    }
+    const filename = /filename\*=UTF-8''([^;]+)/iu.exec(response.headers.get('content-disposition') ?? '')?.[1];
+    downloadFile(await response.blob(), filename ? decodeURIComponent(filename) : 'Статусы целей ДИТ.pptx');
+  } catch (error) {
+    meeting.error = error.message;
+  } finally {
+    meeting.loading = false;
+    if (navigate() === 'weekly' && meeting.mode === 'meeting') {
+      render();
+      document.querySelector('[data-action="meeting-download"]:enabled, [data-action="meeting-preview"]')?.focus();
+    }
+  }
+}
+
 function showWeekly() {
-  if (navigate() !== 'weekly') return;
+  if (navigate() !== 'weekly' || meeting.mode === 'meeting') return;
   const focusedId = document.activeElement?.id;
   render();
   if (focusedId?.startsWith('weekly-')) document.getElementById(focusedId)?.focus();
@@ -1036,7 +1123,11 @@ async function exportBrowserScenario(form, recording) {
 }
 
 function downloadJson(text, name) {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/json;charset=utf-8' }));
+  downloadFile(new Blob([text], { type: 'application/json;charset=utf-8' }), name);
+}
+
+function downloadFile(blob, name) {
+  const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
   link.download = name;
@@ -1152,9 +1243,13 @@ const pages = {
   history: renderHistory,
   settings: renderSettings,
   weekly: () => {
+    const toolbar = renderMeetingToolbar(meeting.mode);
+    if (meeting.mode === 'meeting') return heading('Еженедельный отчёт', 'Презентация по выбранным целям и срезам.')
+      + toolbar + renderMeetingView({ ...meeting, ...meetingChoices(), config: meetingConfig(), pending: meetingPending(),
+        sectionLabels: meetingSections }, statusHelpers);
     const model = weeklyModel();
     const open = (state.riskActions ?? []).filter(item => item.status !== 'done');
-    return renderWeekly({ ...model, actionBoard: open.length ? riskBoard(open) : '' }, statusHelpers);
+    return renderWeekly({ ...model, toolbar, actionBoard: open.length ? riskBoard(open) : '' }, statusHelpers);
   },
   'quality-pilot': renderQualityPage,
   visualization: () => renderVisualization(visualizationModel(), statusHelpers),
@@ -1170,7 +1265,7 @@ function render() {
   const excelOpen = page === 'weekly' && document.getElementById('weekly-excel')?.open;
   document.documentElement.dataset.theme = selectedTheme();
   main.innerHTML = pages[page]();
-  if (excelOpen) document.getElementById('weekly-excel').open = true;
+  if (excelOpen && document.getElementById('weekly-excel')) document.getElementById('weekly-excel').open = true;
   unsavedForm = false;
 }
 
@@ -1470,6 +1565,45 @@ document.addEventListener('click', async event => {
   if (!trigger || trigger.disabled || !state) return;
   const { action, id } = trigger.dataset;
   switch (action) {
+    case 'meeting-tab':
+      meeting.mode = trigger.dataset.mode === 'meeting' ? 'meeting' : 'operational';
+      render();
+      document.querySelector('[data-action="meeting-tab"][aria-pressed="true"]')?.focus();
+      if (meeting.mode === 'meeting' && !meeting.report && !meeting.loading) void previewMeeting();
+      break;
+    case 'meeting-preview':
+      await previewMeeting();
+      break;
+    case 'meeting-download':
+      await exportMeeting();
+      break;
+    case 'meeting-page':
+      meeting.slideIndex = Number(trigger.dataset.index);
+      render();
+      document.querySelector('#meeting-slide-heading')?.focus();
+      break;
+    case 'meeting-move': {
+      const { section, direction } = trigger.dataset;
+      const sections = meetingConfig().sections.slice();
+      const from = sections.findIndex(row => row.id === section);
+      const to = from + (direction === 'up' ? -1 : 1);
+      if (from < 0 || to < 0 || to >= sections.length) break;
+      [sections[from], sections[to]] = [sections[to], sections[from]];
+      meeting.config.sections = sections;
+      render();
+      document.querySelector(`[data-action="meeting-move"][data-section="${section}"][data-direction="${direction}"]:enabled`)?.focus();
+      break;
+    }
+    case 'meeting-reset':
+      meeting.config = defaultMeetingConfig({ period: meetingConfig().period });
+      meeting.error = '';
+      render();
+      document.querySelector('[data-action="meeting-reset"]')?.focus();
+      break;
+    case 'meeting-save':
+      await run(() => post('meeting-template', { config: meetingConfig(),
+        expectedRevision: state.meetingTemplate?.revision ?? null }), 'Шаблон отчёта сохранён');
+      break;
     case 'map-leader': selectOverviewLeader(id); break;
     case 'select-goal':
       currentGoalId = id;
@@ -1686,6 +1820,14 @@ document.addEventListener('click', async event => {
 });
 
 document.addEventListener('input', event => {
+  const meetingForm = event.target.closest('#meeting-form');
+  if (meetingForm) {
+    updateMeetingFields(meetingForm);
+    const download = document.querySelector('[data-action="meeting-download"]');
+    if (download) download.disabled = !meeting.report || meetingPending();
+    const hint = document.querySelector('#meeting-stale');
+    if (hint) hint.hidden = !meetingPending();
+  }
   if (event.target.id === 'goal-search') {
     goalQuery = event.target.value;
     renderGoalSelection();
@@ -1878,6 +2020,10 @@ document.addEventListener('submit', async event => {
   const fields = new FormData(form);
   const body = Object.fromEntries(fields);
   switch (form.getAttribute('id')) {
+    case 'meeting-form':
+      updateMeetingFields(form);
+      await previewMeeting();
+      break;
     case 'restore-confirm-form': {
       if (!restoreFile) break;
       const restored = await run(() => requestRestore('restore', restoreFile, form.dataset.token), 'Рабочие данные восстановлены', { close: true });
@@ -1888,6 +2034,7 @@ document.addEventListener('submit', async event => {
         registerError = reconcileError = '';
         qualityInput = {};
         qualityRunId = '';
+        Object.assign(meeting, { config: null, report: null, input: null });
         await loadStatusRegister();
       }
       break;
@@ -2023,7 +2170,7 @@ document.addEventListener('submit', async event => {
 });
 
 async function checkForReceivedUpdates() {
-  if (!state?.profile?.remote || document.hidden || busy || dialog.open || unsavedForm) return;
+  if (!state?.profile?.remote || document.hidden || busy || meeting.loading || dialog.open || unsavedForm) return;
   const previous = state;
   try {
     const next = await request('/api/state');

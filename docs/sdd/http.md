@@ -38,6 +38,7 @@
 | `/api/dit-applicability` | `goalId, period, applicable, expectedApplicable` | Локальная применимость. Конфликт, если предыдущее значение изменилось |
 | `/api/risk-action` | `id?, expectedRevision?, goalId, scopeId, period, snapshotId?, week?, title, owner, dueOn, nextAction, status` | Создаёт или обновляет локальную задачу. Привязка существующей задачи сохраняется |
 | `/api/quality-pilot` | `sourceId, period, asOf, sheet, startRow, endRow, teamColumn, thresholdColumn, durationColumn, unit` | Вычисляет, сохраняет и возвращает состояние с `qualityReportId`. Точный повтор не дублирует отчёт |
+| `/api/meeting-preview`, `/api/meeting-pptx`, `/api/meeting-template` | Параметры конструктора, срезы и ревизия | [Предпросмотр, скачивание PowerPoint и сохранение шаблона](meeting-deck.md#точки-входа) |
 | `/api/goal` | `goalId, title, target, description, method, curators` | До 30 кураторов. Правка карточки существующей цели поверх HTML |
 | `/api/directory` | `id, name, type, leaderId, aliases` | С `id` обновляется участник, без него создаётся участник. До 20 алиасов. В интерфейсе предусмотрены ДИТ, кластер, команда, продукт и агент |
 | `/api/automation` | `goalId, sourceId, sheet, scopeColumn, valueColumn, headerRow, endRow, period, asOf, scale` | Столбцы различаются, `headerRow` предшествует данным, `endRow` включительно или пусто. `scale=fraction` переводит долю в проценты |

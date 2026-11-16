@@ -4,6 +4,7 @@ import { openWorkbook, parseGoalMap } from './imports.mjs';
 import { normalizeDitMeasurement } from './dit-measurement.mjs';
 import { validateCards } from './visualization-config.mjs';
 import { validateRiskActions } from './risk-actions.mjs';
+import { normalizeMeetingConfig } from '../public/meeting-config.js';
 
 export const maxWorkspaceBackupBytes = 128 * 1024 * 1024;
 const maxOriginalBytes = 20 * 1024 * 1024;
@@ -15,7 +16,7 @@ const ditStatuses = new Set(['', 'Выполнено', 'Под риском', '�
 const reserved = new Set(['__proto__', 'constructor', 'prototype']);
 const workspaceFields = new Set(['schemaVersion', 'profile', 'catalogSourceId', 'catalog', 'goalEdits',
   'directory', 'drafts', 'sources', 'statusDates', 'statusLinks', 'ditStatuses', 'ditDrafts', 'automations',
-  'runs', 'visualization', 'shared', 'riskActions', 'ditTimeline', 'ditExcluded', 'qualityReports', 'restoreConnectionPending']);
+  'runs', 'visualization', 'shared', 'riskActions', 'ditTimeline', 'ditExcluded', 'qualityReports', 'restoreConnectionPending', 'meetingTemplate']);
 const profileFields = new Set(['name', 'remote', 'branch', 'refreshMinutes', 'theme', 'gitExecutable', 'gitAuth']);
 const sourceFields = new Set(['id', 'name', 'size', 'type', 'uploadedAt', 'sheets']);
 const originalFields = new Set(['id', 'base64']);
@@ -268,6 +269,12 @@ function validateConfiguration(state, sources) {
   if (state.ditExcluded !== undefined) validateList(state.ditExcluded,
     row => record(row) && id(row.goalId) && typeof row.period === 'string' && quarterOrYear.test(row.period),
     ditKey, 'некорректная применимость ДИТ');
+  if (state.meetingTemplate !== undefined) {
+    check(record(state.meetingTemplate) && typeof state.meetingTemplate.revision === 'string'
+      && uuid.test(state.meetingTemplate.revision) && record(state.meetingTemplate.config), 'некорректный шаблон встречи');
+    try { normalizeMeetingConfig(state.meetingTemplate.config); }
+    catch { throw invalid('некорректные параметры шаблона встречи'); }
+  }
   check(state.restoreConnectionPending === undefined || typeof state.restoreConnectionPending === 'boolean', 'некорректное состояние подключения');
 }
 
