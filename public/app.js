@@ -1,4 +1,5 @@
 import { renderStatusDetail, renderStatusPage, renderStatusRows } from './status-view.js';
+import { renderStatusExport } from './status-export-view.js';
 import { renderReconciliation, renderReconciliationRows, renderStatusLinkDialog, statusLinkScopeOptions } from './reconciliation-view.js';
 import { renderWeekly } from './weekly-view.js';
 import { renderVisualization, renderVisualizationBuilder, renderVisualizationEditor } from './visualization-view.js';
@@ -20,7 +21,7 @@ import { addActivity, markActivityRead, readActivity, reconcileActivity, writeAc
 const sections = [
   {
     label: 'Итоги', icon: 'results',
-    pages: [['map', 'Карта целей'], ['statuses', 'Статусы целей'], ['dit-reports', 'Срезы ДИТ'], ['weekly', 'Еженедельный отчёт'], ['risk-actions', 'Поручения'], ['browser-reports', 'Отчёты из браузера'], ['visualization', 'Визуализация'], ['history', 'История']],
+    pages: [['map', 'Карта целей'], ['statuses', 'Статусы целей'], ['status-export', 'Сводная по статусам'], ['dit-reports', 'Срезы ДИТ'], ['weekly', 'Еженедельный отчёт'], ['risk-actions', 'Поручения'], ['browser-reports', 'Отчёты из браузера'], ['visualization', 'Визуализация'], ['history', 'История']],
   },
   {
     label: 'Настройка', icon: 'setup',
@@ -92,6 +93,8 @@ let registerLoading = true;
 let registerError = '';
 let registerRequest = 0;
 let resultSourceId = '';
+const statusExport = { data: null, drafts: false, loading: false, downloading: false, error: '' };
+let statusExportRequest = 0;
 let ditSettingsPeriod = '';
 const ditHistoryFilters = { period: '', earlier: null, later: '' };
 let qualityInput = {};
@@ -840,6 +843,45 @@ function renderStatuses() {
   return renderStatusPage({ ...statusModel(), sourcePicker }, statusHelpers);
 }
 
+function statusExportQuery() {
+  return statusExport.drafts ? '?drafts=1' : '';
+}
+
+async function loadStatusExport() {
+  const ticket = ++statusExportRequest;
+  statusExport.loading = true;
+  statusExport.error = '';
+  statusExport.data = null;
+  if (navigate() === 'status-export') render();
+  try {
+    const report = await request('/api/status-export' + statusExportQuery());
+    if (ticket === statusExportRequest) statusExport.data = report;
+  } catch (error) {
+    if (ticket === statusExportRequest) statusExport.error = error.message;
+  } finally {
+    if (ticket === statusExportRequest) {
+      statusExport.loading = false;
+      if (navigate() === 'status-export') render();
+    }
+  }
+}
+
+async function downloadStatusExport() {
+  statusExport.downloading = true;
+  statusExport.error = '';
+  render();
+  try {
+    const response = await fetch('/api/status-export.xlsx' + statusExportQuery());
+    if (!response.ok) throw new Error((await response.json()).error || 'Не удалось сформировать Excel.');
+    downloadFile(await response.blob(), 'Сводная по статусам — РМ УОР.xlsx');
+  } catch (error) {
+    statusExport.error = error.message;
+  } finally {
+    statusExport.downloading = false;
+    if (navigate() === 'status-export') render();
+  }
+}
+
 function refreshStatusRows() {
   const results = document.querySelector('#kr-results');
   if (results) results.innerHTML = renderStatusRows(statusModel(), statusHelpers);
@@ -1154,6 +1196,7 @@ async function loadWeekly() {
 }
 
 function loadRouteData() {
+  if (navigate() === 'status-export') void loadStatusExport();
   if (navigate() === 'reconcile') void loadReconciliation();
   if (navigate() === 'weekly') {
     void loadWeekly();
@@ -1397,6 +1440,7 @@ function renderQualityPage() {
 const pages = {
   map: renderMap,
   statuses: renderStatuses,
+  'status-export': () => renderStatusExport(statusExport, statusHelpers),
   reconcile: () => renderReconciliation(reconciliationModel(), statusHelpers),
   edit: () => renderMap(true),
   'dit-settings': renderDitStatusSettings,
@@ -1749,6 +1793,7 @@ document.addEventListener('click', async event => {
   if (!trigger || trigger.disabled || !state) return;
   const { action, id } = trigger.dataset;
   switch (action) {
+    case 'status-export-download': await downloadStatusExport(); break;
     case 'activity-open':
       syncActivity();
       showActivityPanel('activity');
@@ -2060,6 +2105,12 @@ document.addEventListener('input', event => {
 
 document.addEventListener('change', async event => {
   const control = event.target;
+  if (control.id === 'status-export-drafts') {
+    statusExport.drafts = control.checked;
+    await loadStatusExport();
+    document.getElementById('status-export-drafts')?.focus();
+    return;
+  }
   if (control.id === 'meeting-maturity-upload') {
     const file = control.files[0];
     control.value = '';
@@ -2415,6 +2466,7 @@ async function checkForReceivedUpdates() {
     state = next;
     if (changed || navigate() === 'history') render();
     else updateShell();
+    if (changed && navigate() === 'status-export') void loadStatusExport();
     if (changed && next.shared.version > previous.shared.version) {
       const publication = next.shared.history.find(item => item.version === next.shared.version);
       showNotice(`Обновлены общие данные · версия ${next.shared.version}${publication?.author ? ` · ${publication.author}` : ''}`);

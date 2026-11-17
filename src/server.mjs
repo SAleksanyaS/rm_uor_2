@@ -12,6 +12,7 @@ import * as nativeGit from './shared-git.mjs';
 import { maxWorkspaceBackupBytes } from './workspace-restore.mjs';
 import { renderMeetingPptx } from './meeting-pptx.mjs';
 import { createWorkspaceHealth, readBuildRevision } from './workspace-health.mjs';
+import { planStatusExport, writeStatusWorkbook } from './status-export.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const staticFiles = new Map([
@@ -21,6 +22,7 @@ const staticFiles = new Map([
   ['/activity-view.js', ['activity-view.js', 'text/javascript; charset=utf-8']],
   ['/activity.css', ['activity.css', 'text/css; charset=utf-8']],
   ['/status-view.js', ['status-view.js', 'text/javascript; charset=utf-8']],
+  ['/status-export-view.js', ['status-export-view.js', 'text/javascript; charset=utf-8']],
   ['/reconciliation-view.js', ['reconciliation-view.js', 'text/javascript; charset=utf-8']],
   ['/weekly-view.js', ['weekly-view.js', 'text/javascript; charset=utf-8']],
   ['/meeting-config.js', ['meeting-config.js', 'text/javascript; charset=utf-8']],
@@ -174,6 +176,27 @@ async function route(request, response, workspace, getBrowserWorkspace, buildRev
   }
   if (method === 'GET' && url.pathname === '/api/status-register') {
     return json(response, 200, await workspace.statusRegister(url.searchParams.get('source')));
+  }
+  if (method === 'GET' && ['/api/status-export', '/api/status-export.xlsx'].includes(url.pathname)) {
+    const state = workspace.getState();
+    const register = await workspace.statusRegister(state.bundledStatusSourceId);
+    if (!register) throw new WorkspaceError('Загрузите книгу реестра в разделе «Источники».', 'NOT_FOUND', 404);
+    const { details, updates } = planStatusExport(state, register, url.searchParams.get('drafts') === '1');
+    if (url.pathname === '/api/status-export') return json(response, 200, {
+      source: register.source.name, periods: register.periods, matched: updates.size,
+      rows: details.map(({ goalId, title, scope, period, status, origin, result, rowNumber }) =>
+        ({ goalId, title, scope, period, status, origin, result, rowNumber }))
+    });
+    const { bytes } = await workspace.readOriginal(register.source.id);
+    let workbook;
+    try { workbook = writeStatusWorkbook(bytes, register.sheet, { details, updates }); }
+    catch (error) { throw new WorkspaceError(error.message, 'STATUS_EXPORT', 422); }
+    response.writeHead(200, {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': attachment('Сводная по статусам — РМ УОР.xlsx'),
+      'Content-Length': workbook.length
+    });
+    return response.end(workbook);
   }
   if (method === 'GET' && url.pathname === '/api/status-week') {
     return json(response, 200, await workspace.statusWeek({

@@ -119,7 +119,7 @@ export function parseGoalMap(input) {
 }
 
 // Open only named archive members in memory. Nothing is extracted to a filesystem.
-function openZip(input) {
+export function openZip(input) {
   if (!(input instanceof Uint8Array)) throw new TypeError('Для просмотра нужен файл XLSX.');
   const bytes = Buffer.isBuffer(input) ? input : Buffer.from(input);
   if (bytes.length > maxFileBytes) throw new Error('Файл XLSX слишком большой.');
@@ -163,7 +163,7 @@ function openZip(input) {
   }
   if (offset !== directoryEnd) throw corrupt();
 
-  return function read(name) {
+  function read(name) {
     const entry = entries.get(name);
     if (!entry) return null;
     const { nameBytes, flags, method, compressedSize, size, local } = entry;
@@ -183,7 +183,9 @@ function openZip(input) {
     }
     if (unpacked.length !== size) throw corrupt();
     return unpacked;
-  };
+  }
+  read.names = [...entries.keys()];
+  return read;
 }
 
 function xmlText(value) {
@@ -380,6 +382,7 @@ export function openWorkbook(bytes) {
   if (!sheetList) throw new Error('В книге XLSX нет листов.');
   const sheets = [];
   const byName = new Map();
+  const sheetPaths = new Map();
   let cellCount = 0;
   function countCell() {
     cellCount++;
@@ -396,6 +399,7 @@ export function openWorkbook(bytes) {
     if (!xml) throw new Error('В архиве отсутствует лист XLSX.');
     const data = readSheet(xml, stringsTable, countCell);
     byName.set(name, data);
+    sheetPaths.set(name, path);
     const hidden = attrs.get('state') === 'hidden' || attrs.get('state') === 'veryHidden';
     sheets.push({ name, rows: data.rows, columns: data.columns, hidden, filterRange: data.filterRange });
   }
@@ -415,6 +419,7 @@ export function openWorkbook(bytes) {
 
   return {
     sheets,
+    sheetPath: name => sheetPaths.get(name),
     preview(sheet = defaultSheet, offset = 0, limit = 100) {
       if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1) {
         throw new Error('Недопустимый диапазон просмотра листа XLSX.');
