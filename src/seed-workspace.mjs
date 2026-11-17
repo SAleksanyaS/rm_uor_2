@@ -1,6 +1,8 @@
 import { constants } from 'node:fs';
-import { copyFile, link, mkdir, mkdtemp, readdir, rm, rmdir, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { copyFile, link, mkdir, mkdtemp, readFile, readdir, rm, rmdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { readStatusRegister } from './status-register.mjs';
 
 async function exists(path) {
   try {
@@ -34,4 +36,19 @@ export async function seedWorkspace(seed, dataDir) {
     await rm(join(staging, 'workspace.json'), { force: true });
     await rmdir(staging);
   }
+}
+
+export async function readBundledStatus(seed) {
+  const manifest = join(seed, 'status-register.json');
+  if (!(await exists(manifest))) return null;
+  const { id, name } = JSON.parse(await readFile(manifest, 'utf8'));
+  if (typeof id !== 'string' || !/^[a-f0-9]{64}$/u.test(id) || typeof name !== 'string' || !/\.xlsx$/iu.test(name)) {
+    throw new Error('Некорректное описание книги статусов в комплекте.');
+  }
+  const bytes = await readFile(join(seed, 'sources', id));
+  if (createHash('sha256').update(bytes).digest('hex') !== id) {
+    throw new Error('Книга статусов в комплекте не совпадает с контрольной суммой.');
+  }
+  readStatusRegister(bytes);
+  return { id, name, bytes };
 }

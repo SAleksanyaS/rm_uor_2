@@ -279,7 +279,7 @@ async function saveState(path, next) {
   }
 }
 
-export async function openWorkspace({ dataDir, git = nativeGit }) {
+export async function openWorkspace({ dataDir, git = nativeGit, bundledStatusSourceId }) {
   const sourceDir = join(dataDir, 'sources');
   const statePath = join(dataDir, 'workspace.json');
   await mkdir(sourceDir, { recursive: true });
@@ -347,6 +347,7 @@ export async function openWorkspace({ dataDir, git = nativeGit }) {
       catalogSourceId: state.catalogSourceId,
       directory: state.directory,
       sources: state.sources,
+      bundledStatusSourceId: state.sources.some(source => source.id === bundledStatusSourceId) ? bundledStatusSourceId : null,
       statusSnapshots: datedStatusSources(),
       ditStatuses: [...displayedDit.values()],
       ditPublished, ditDrafts,

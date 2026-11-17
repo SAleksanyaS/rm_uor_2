@@ -4,7 +4,7 @@ import { pipeline } from 'node:stream/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { appVersion, maxSourceBytes, openWorkspace, WorkspaceError } from './workspace.mjs';
-import { seedWorkspace } from './seed-workspace.mjs';
+import { readBundledStatus, seedWorkspace } from './seed-workspace.mjs';
 import { createBrowserConnector, validateBrowserConfig } from './browser-connector.mjs';
 import { BrowserWorkspaceError, openBrowserWorkspace } from './browser-workspace.mjs';
 import { BrowserScenarioError, parseBrowserScenario, serializeBrowserScenario } from './browser-scenario.mjs';
@@ -240,12 +240,16 @@ function errorStatus(error) {
 export async function startServer({
   port = 4179,
   dataDir = join(root, '.local'),
+  seedDir,
   git,
   background = true,
   browserOptions = {}
 } = {}) {
   dataDir = resolve(dataDir);
-  const workspace = await openWorkspace({ dataDir, git });
+  const bundledStatus = seedDir ? await readBundledStatus(seedDir) : null;
+  if (seedDir) await seedWorkspace(seedDir, dataDir);
+  const workspace = await openWorkspace({ dataDir, git, bundledStatusSourceId: bundledStatus?.id });
+  if (bundledStatus) await workspace.importSource(bundledStatus.name, bundledStatus.bytes);
   let browserWorkspace;
   function getBrowserWorkspace() {
     if (!browserWorkspace) {
@@ -310,8 +314,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const port = Number(process.env.RM_UOR_PORT ?? 4179);
   const dataDir = process.env.RM_UOR_DATA_DIR ? resolve(process.env.RM_UOR_DATA_DIR) : join(root, '.local');
   try {
-    if (!process.env.RM_UOR_DATA_DIR) await seedWorkspace(join(root, 'seed'), dataDir);
-    const { server, url } = await startServer({ port, dataDir });
+    const seedDir = process.env.RM_UOR_DATA_DIR ? undefined : join(root, 'seed');
+    const { server, url } = await startServer({ port, dataDir, seedDir });
     console.log(`Рабочее место УОР ${appVersion} — ${url}`);
     process.once('SIGINT', () => server.close());
     process.once('SIGTERM', () => server.close());

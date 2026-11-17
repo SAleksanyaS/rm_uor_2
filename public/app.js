@@ -755,11 +755,13 @@ function statusModel() {
 }
 
 function renderStatuses() {
-  const snapshots = state.statusSnapshots ?? [];
+  const snapshots = [...(state.statusSnapshots ?? [])];
+  const bundled = state.sources.find(item => item.id === state.bundledStatusSourceId);
+  if (bundled && !snapshots.some(item => item.id === bundled.id)) snapshots.push(bundled);
   const sourcePicker = snapshots.length < 2 ? '' : `<label class="field scope-control snapshot-picker">
     <span>Книга со статусами</span><select id="kr-source-picker">
-    ${option('', 'Последний датированный срез', resultSourceId)}
-    ${snapshots.map(item => option(item.id, `${dateText(item.asOf)} · ${item.name}`, resultSourceId)).join('')}
+    ${option('', 'Текущая книга по умолчанию', resultSourceId)}
+    ${snapshots.map(item => option(item.id, item.asOf ? `${dateText(item.asOf)} · ${item.name}` : item.name, resultSourceId)).join('')}
     </select></label>`;
   return renderStatusPage({ ...statusModel(), sourcePicker }, statusHelpers);
 }
