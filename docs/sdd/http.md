@@ -47,6 +47,7 @@
 | `/api/accept` | `goalId, expectedRevision` | Переносит расчёт, соответствующий текущему правилу, в локальные черновики |
 | `/api/visualization` | `cards, expectedRevision` | До 8 карточек с уникальными `id`. Поля `id, title, kind, group, period, status, leader`. Виды `bar / stacked / table`, группы `status / leader / objective` |
 | `/api/gitcheck` | `gitExecutable` | Возвращает `{version}` для выбранного Git или Git из `PATH` |
+| `/api/workspace-health` | Необязательный `sourceId` выбранного реестра Excel | Возвращает `{checkedAt, checks}` по приложению, карте, Excel, Git и браузерным отчётам. Выполняет локальный `git --version`. |
 | `/api/refresh` | `credentials, credentialRemote` в режиме входа, иначе пустой объект | Обновляет доступную общую версию. Подключение привязано к профилю |
 | `/api/publishpreview` | `goalIds`, необязательный `ditPeriod`, при входе `credentials, credentialRemote` | Возвращает `author, remote, branch, revision, goals, token` и данные `ditPeriod, ditChanges` при их наличии |
 | `/api/publish` | Тот же выбор и параметры входа, `token` из предпросмотра | Повторно проверяет подключение, версии и точный состав правок перед коммитом |

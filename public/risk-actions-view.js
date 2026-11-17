@@ -54,7 +54,7 @@ export function renderRiskActions(actions, { escape, dateText = value => value }
     const context = [goalName(action.goalId), scopeName(action.scopeId), action.period].filter(Boolean).map(escape).join(' · ');
     const tone = action.status === 'done' ? ' success' : action.status === 'in-progress' ? ' accent' : '';
     const late = Boolean(today && action.status !== 'done' && action.dueOn < today);
-    return `<li class="stack">
+    return `<li class="stack" tabindex="-1" data-activity-target="${escape(action.id)}">
       <div class="headline"><strong>${escape(action.title)}</strong><span class="badge${tone}">${escape(statusLabels[action.status] || action.status)}</span></div>
       <p class="muted small">${context}</p>
       <p class="small">${escape(action.owner)} · Срок ${escape(dateText(action.dueOn))} ${late ? '<span class="badge warning">Просрочено</span>' : ''}</p>

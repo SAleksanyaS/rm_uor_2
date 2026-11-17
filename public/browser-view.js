@@ -74,7 +74,7 @@ function connectorCard(connector, model, helpers) {
   const collectingBlocked = running || recordingActive ? ' disabled' : '';
   const canRead = Boolean(connector.readySelector && connector.reportSelector);
   const scripted = Boolean(connector.downloadSelector || connector.actions?.length);
-  return `<article class="panel panel-inner browser-card">
+  return `<article class="panel panel-inner browser-card" tabindex="-1" data-activity-target="${id}">
     <header class="browser-card-heading"><div><h2>${escape(connector.name)}</h2><p class="muted small browser-address">${escape(reportLocation(connector.url))}</p></div>
       ${open ? '<span class="badge success">Окно открыто</span>' : ''}</header>
     ${connector.curator ? `<p class="muted small">Куратор недельного отчёта · ${escape(connector.curator)}</p>` : ''}

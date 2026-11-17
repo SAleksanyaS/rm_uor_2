@@ -1,0 +1,72 @@
+.activity-buttons { display: flex; align-items: center; gap: 5px; flex: none; }
+
+.topbar .activity-trigger {
+  position: relative;
+  width: 36px;
+  min-height: 36px;
+  padding: 0;
+  color: var(--icon);
+}
+.activity-trigger > .icon { width: 18px; height: 18px; }
+.topbar .activity-trigger:hover { color: var(--primary-hover); }
+.activity-count, .activity-health-dot { position: absolute; display: grid; place-items: center; border: 2px solid var(--paper); }
+.activity-count {
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 3px;
+  color: var(--on-primary);
+  background: var(--primary);
+  border-radius: 20px;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.activity-health-dot { top: 3px; right: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--activity-ink); }
+
+.activity-health-trigger, .activity-badge { --activity-ink: var(--muted); --activity-fill: var(--base); }
+[data-severity="ok"]:is(.activity-health-trigger, .activity-badge) { --activity-ink: var(--positive); --activity-fill: var(--positive-bg); }
+[data-severity="warning"]:is(.activity-health-trigger, .activity-badge) { --activity-ink: var(--risk); --activity-fill: var(--risk-bg); }
+[data-severity="error"]:is(.activity-health-trigger, .activity-badge) { --activity-ink: var(--error); --activity-fill: var(--error-bg); }
+
+.activity-dialog-head, .activity-entry-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 10px; }
+.activity-dialog-head > h2, .activity-entry-head > strong { overflow-wrap: anywhere; }
+.activity-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.activity-list > li { min-width: 0; }
+.activity-entry, .activity-health-row {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  text-align: left;
+  line-height: 1.4;
+}
+.activity-entry:hover { border-color: var(--field-border); background: var(--base); }
+.activity-entry.is-unread { background: var(--tint); }
+.activity-entry-head > time { color: var(--muted); font-size: 12px; }
+.activity-detail { color: var(--muted); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.activity-entry-status, .activity-health-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.activity-entry-status { color: var(--primary-hover); font-size: 11px; }
+.activity-unread { display: inline-flex; align-items: center; gap: 5px; }
+.activity-unread i { display: block; width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
+.activity-badge {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 20px;
+  color: var(--activity-ink);
+  background: var(--activity-fill);
+  font-size: 11px;
+  font-weight: 630;
+}
+.activity-health-list { gap: 8px; }
+.activity-health-actions { margin-top: 2px; }
+
+@media (pointer: coarse) {
+  .topbar .activity-trigger { width: 44px; min-height: 44px; }
+}

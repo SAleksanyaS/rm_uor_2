@@ -164,8 +164,12 @@ function checkedStoredState(value, validateConfig) {
     if (!isRecord(job) || typeof job.id !== 'string' || !ids.has(job.connectorId) || !kinds.has(job.kind)
         || !['running', 'error', 'success'].includes(job.state) || typeof job.message !== 'string' || job.message.length > 350) throw storageError();
     const { id, connectorId, kind, state, message } = job;
-    if (state === 'running') return { id, connectorId, kind, state: 'error', message: 'Операция прервалась при завершении работы.' };
-    const result = { id, connectorId, kind, state, message };
+    const dates = {};
+    for (const key of ['startedAt', 'finishedAt']) {
+      if (typeof job[key] === 'string' && Number.isFinite(Date.parse(job[key]))) dates[key] = job[key];
+    }
+    if (state === 'running') return { id, connectorId, kind, ...dates, state: 'error', message: 'Операция прервалась при завершении работы.' };
+    const result = { id, connectorId, kind, state, message, ...dates };
     if (kind === 'collect' && state === 'success') {
       if (!safeFilename(job.fileName) || typeof job.sourceId !== 'string' || !/^[a-f0-9]{64}$/u.test(job.sourceId)) throw storageError();
       Object.assign(result, { fileName: job.fileName, sourceId: job.sourceId });
@@ -360,9 +364,10 @@ export async function openBrowserWorkspace({ privateRoot, runtime, validateConfi
         ? weekly.captured ? `Сохранено недель в отчёте куратора: ${weekly.captured}.`
           : 'Текст сохранён. Для недельной сводки нужен диапазон дат и блоки отчёта в выбранном разделе.'
         : succeeded[job.kind];
+      const finishedAt = new Date().toISOString();
       const outcome = error
-        ? { ...job, state: 'error', message: failures.get(error.code) ?? 'Операция не завершилась. Проверьте настройки источника и вход.' }
-        : { ...job, state: 'success', message,
+        ? { ...job, finishedAt, state: 'error', message: failures.get(error.code) ?? 'Операция не завершилась. Проверьте настройки источника и вход.' }
+        : { ...job, finishedAt, state: 'success', message,
           ...(result.sourceId ? { sourceId: result.sourceId, fileName: result.fileName } : {}) };
       const jobs = boundedJobs(state.jobs.map(item => item.id === job.id ? outcome : item));
       const reports = !error && result.report
@@ -371,7 +376,7 @@ export async function openBrowserWorkspace({ privateRoot, runtime, validateConfi
         await commit({ ...state, jobs, reports, curatorWeeks: weekly?.archive ?? state.curatorWeeks });
       } catch {
         state = { ...state, jobs: jobs.map(item => item.id === job.id
-          ? { ...job, state: 'error', message: 'Не удалось сохранить состояние операции. Проверьте список источников.' } : item) };
+          ? { ...job, finishedAt, state: 'error', message: 'Не удалось сохранить состояние операции. Проверьте список источников.' } : item) };
       }
     });
   }
@@ -387,7 +392,7 @@ export async function openBrowserWorkspace({ privateRoot, runtime, validateConfi
     if (kind !== 'close' && !occupied.has(connector.id) && occupied.size >= maxProfiles) throw busy();
     if (previous) previous.controller.abort(canceled());
 
-    const job = { id: randomUUID(), connectorId: connector.id, kind, state: 'running', message: started[kind] };
+    const job = { id: randomUUID(), connectorId: connector.id, kind, startedAt: new Date().toISOString(), state: 'running', message: started[kind] };
     const task = { kind, controller: new AbortController(), importing: false };
     active.set(connector.id, task);
     state = { ...state, jobs: boundedJobs([...state.jobs, job]) };

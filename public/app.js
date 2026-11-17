@@ -14,6 +14,8 @@ import { renderRestoreControl, renderRestorePreview } from './restore-view.js';
 import { defaultMeetingConfig, isMeetingPeriod, meetingSections, normalizeMeetingConfig } from './meeting-config.js';
 import { renderMeetingToolbar, renderMeetingView } from './meeting-view.js';
 import { renderMeetingMaturity } from './meeting-maturity-view.js';
+import { renderActivityButtons, renderActivityDialog, renderHealthDialog } from './activity-view.js';
+import { addActivity, markActivityRead, readActivity, reconcileActivity, writeActivity } from './activity-feed.js';
 
 const sections = [
   {
@@ -62,6 +64,12 @@ const escape = value => String(value ?? '').replace(/[&<>"']/g, character => ({ 
 const numberFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 });
 const dateFormat = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeZone: 'Europe/Moscow' });
 const dateInputFormat = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' });
+const clockFormat = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Moscow' });
+const activityHelpers = { escape, dateText: value => value.includes('T') ? clockFormat.format(new Date(value)) : dateText(value) };
+const activityStorage = { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) };
+let activityItems = readActivity(activityStorage);
+let activityTarget;
+const healthCheck = { health: null, loading: false, error: '' };
 
 let state;
 let currentGoalId = '';
@@ -182,12 +190,78 @@ function updateShell(page = navigate()) {
   const profile = state?.profile;
   const name = profile?.name || 'Настроить профиль';
   const initials = profile?.name?.trim().split(/\s+/).slice(0, 2).map(word => word[0]).join('').toUpperCase() || 'УОР';
-  document.querySelector('#top-actions').innerHTML = `
-    ${section === sections[1] ? `<a href="#settings" class="profile-button" aria-label="${escape(name)}"><span class="avatar">${escape(initials)}</span><span>${escape(name)}</span></a>`
-      : profile?.name ? `<span class="profile-button"><span class="avatar">${escape(initials)}</span><span>${escape(name)}</span></span>` : ''}`;
+  const top = document.querySelector('#top-actions');
+  if (!top.firstElementChild) top.innerHTML = '<div id="activity-slot"></div><div id="top-profile" hidden></div>';
+  const profileSlot = top.querySelector('#top-profile');
+  const profileMarkup = section === sections[1] ? `<a href="#settings" class="profile-button" aria-label="${escape(name)}"><span class="avatar">${escape(initials)}</span><span>${escape(name)}</span></a>`
+    : profile?.name ? `<span class="profile-button"><span class="avatar">${escape(initials)}</span><span>${escape(name)}</span></span>` : '';
+  if (profileSlot.innerHTML !== profileMarkup) profileSlot.innerHTML = profileMarkup;
+  profileSlot.hidden = !profileMarkup;
+  syncActivity();
   const revision = state?.shared?.version;
   document.querySelector('#sidebar-footer').innerHTML = `<p class="local-status"><i aria-hidden="true"></i>Работа на этом компьютере</p>
     <small class="version">${state?.appVersion ? `Версия ${escape(state.appVersion)}` : ''}${revision !== undefined && revision !== null ? ` · данные ${escape(revision)}` : ''}</small>`;
+}
+
+function updateActivityButtons() {
+  const slot = document.querySelector('#activity-slot');
+  if (!slot) return;
+  const unread = activityItems.filter(item => !item.read).length;
+  const checks = healthCheck.health?.checks ?? [];
+  const severity = healthCheck.error ? 'error' : ['error', 'warning', 'ok'].find(value => checks.some(check => check.status === value)) ?? 'neutral';
+  const key = `${unread}:${severity}`;
+  if (slot.dataset.status === key) return;
+  const focused = slot.contains(document.activeElement) ? document.activeElement.dataset.action : '';
+  slot.dataset.status = key;
+  slot.innerHTML = renderActivityButtons({ unread, severity }, activityHelpers);
+  if (focused) slot.querySelector(`[data-action="${focused}"]`)?.focus();
+}
+
+function setActivityItems(items) {
+  if (items !== activityItems) {
+    activityItems = items;
+    writeActivity(activityStorage, items);
+  }
+  updateActivityButtons();
+}
+
+function syncActivity() {
+  setActivityItems(reconcileActivity(activityItems, { state, browser: browserState, today: today() }));
+}
+
+function showActivityPanel(kind, focus = '#dialog-title') {
+  showDialog(kind === 'activity' ? renderActivityDialog({ items: activityItems }, activityHelpers)
+    : renderHealthDialog(healthCheck, activityHelpers));
+  dialog.dataset.panel = kind;
+  dialog.querySelector(focus)?.focus();
+}
+
+async function checkWorkspaceHealth() {
+  if (healthCheck.loading) return;
+  healthCheck.loading = true;
+  healthCheck.error = '';
+  showActivityPanel('health');
+  try {
+    healthCheck.health = await post('workspace-health', { sourceId: resultSourceId || register?.source.id });
+  } catch (error) {
+    healthCheck.error = error.message;
+  } finally {
+    healthCheck.loading = false;
+    updateActivityButtons();
+    if (dialog.open && dialog.dataset.panel === 'health') showActivityPanel('health', '[data-action="health-check"]');
+  }
+}
+
+function focusActivityTarget(page) {
+  if (activityTarget?.route !== page) return;
+  const target = [...main.querySelectorAll('[data-activity-target]')].find(element => element.dataset.activityTarget === activityTarget.targetId);
+  if (!target) return;
+  activityTarget = undefined;
+  requestAnimationFrame(() => {
+    if (!target.isConnected) return;
+    target.scrollIntoView({ block: 'center' });
+    target.focus({ preventScroll: true });
+  });
 }
 
 function heading(title, description, actions = '') {
@@ -683,7 +757,7 @@ function renderHistory() {
       ${!state.profile.remote ? '<p class="form-caption">Общий репозиторий можно указать в <a href="#settings">настройках</a>.</p>' : ''}
     </section>
     <section class="panel panel-inner"><h2>Публикации</h2>
-      ${history.length ? [...history].reverse().map(item => `<div class="history-row">
+      ${history.length ? [...history].reverse().map(item => `<div class="history-row" tabindex="-1" data-activity-target="${escape(item.version)}">
         <div><strong>${item.version != null ? `Версия ${escape(item.version)}` : 'Обновление'}${item.author ? ` · ${escape(item.author)}` : ''}</strong>
         ${item.goalIds?.length ? `<p class="muted small">Цели — ${item.goalIds.map(escape).join(', ')}</p>` : ''}</div>
         <time class="muted small">${escape(dateText(item.at ?? item.publishedAt))}</time>
@@ -1124,8 +1198,10 @@ function isBrowserPage() {
 async function applyBrowserState(next) {
   const previous = browserState;
   browserState = { ...next, loading: false, error: '' };
+  syncActivity();
   if (isBrowserPage() && JSON.stringify(browserState) !== JSON.stringify(previous)) render();
   const receivedFile = next.jobs.some(job => job.kind === 'collect' && job.state === 'success' && job.sourceId
+    && !state.sources.some(source => source.id === job.sourceId)
     && !previous.jobs.some(before => before.id === job.id && before.state === 'success'));
   if (receivedFile) {
     try {
@@ -1364,6 +1440,7 @@ function render() {
   if (excelOpen && document.getElementById('weekly-excel')) document.getElementById('weekly-excel').open = true;
   if (mappingsOpen && document.getElementById('meeting-maturity-mapping')) document.getElementById('meeting-maturity-mapping').open = true;
   unsavedForm = false;
+  focusActivityTarget(page);
 }
 
 function showNotice(message, error = false) {
@@ -1387,6 +1464,7 @@ function showNotice(message, error = false) {
 }
 
 function showDialog(content) {
+  delete dialog.dataset.panel;
   dialog.innerHTML = `<div class="dialog-inner">${content}</div>`;
   if (!dialog.open) dialog.showModal();
 }
@@ -1514,10 +1592,18 @@ async function request(path, options) {
   return result;
 }
 
-function post(path, data) {
-  return request(`/api/${path}`, {
-    method: 'POST', headers: { 'content-type': 'application/json', 'x-rmuor': '1' }, body: JSON.stringify(data),
-  });
+async function post(path, data) {
+  try {
+    return await request(`/api/${path}`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-rmuor': '1' }, body: JSON.stringify(data),
+    });
+  } catch (error) {
+    if (path === 'publish') setActivityItems(addActivity(activityItems, {
+      id: `publish:${Math.floor(Date.now() / 60000)}:${error.code ?? ''}`, title: 'Не удалось опубликовать изменения',
+      detail: error.message, at: new Date().toISOString(), severity: 'error', route: data.ditPeriod ? 'dit-settings' : 'edit'
+    }));
+    throw error;
+  }
 }
 
 function requestRestore(path, file, token) {
@@ -1648,6 +1734,7 @@ sidebar.addEventListener('click', event => {
 });
 window.addEventListener('hashchange', () => {
   setMenu(false);
+  if (activityTarget?.route !== navigate()) activityTarget = undefined;
   render();
   if (state) {
     onboarding();
@@ -1662,6 +1749,30 @@ document.addEventListener('click', async event => {
   if (!trigger || trigger.disabled || !state) return;
   const { action, id } = trigger.dataset;
   switch (action) {
+    case 'activity-open':
+      syncActivity();
+      showActivityPanel('activity');
+      break;
+    case 'activity-read-all':
+      setActivityItems(markActivityRead(activityItems));
+      showActivityPanel('activity');
+      break;
+    case 'activity-item': {
+      const item = activityItems.find(row => row.id === id);
+      if (!item) break;
+      setActivityItems(markActivityRead(activityItems, id));
+      dialog.close();
+      activityTarget = item.targetId ? item : undefined;
+      if (navigate() !== item.route) location.hash = item.route;
+      else focusActivityTarget(item.route);
+      break;
+    }
+    case 'health-open': showActivityPanel('health'); break;
+    case 'health-check': await checkWorkspaceHealth(); break;
+    case 'activity-git-refresh':
+      dialog.close();
+      await beginGitOperation('refresh');
+      break;
     case 'meeting-tab':
       meeting.mode = trigger.dataset.mode === 'meeting' ? 'meeting' : 'operational';
       render();
@@ -2320,7 +2431,13 @@ try {
   onboarding();
   void loadStatusRegister();
   loadRouteData();
+  void loadBrowserState();
   setInterval(checkForReceivedUpdates, 15000);
+  setInterval(() => {
+    if (document.hidden) return;
+    syncActivity();
+    if (!isBrowserPage()) void loadBrowserState();
+  }, 30000);
   setInterval(() => {
     if ((!document.hidden && isBrowserPage()) || browserState.jobs.some(job => job.state === 'running')) void loadBrowserState();
   }, 1600);

@@ -11,11 +11,15 @@ import { BrowserScenarioError, parseBrowserScenario, serializeBrowserScenario } 
 import * as nativeGit from './shared-git.mjs';
 import { maxWorkspaceBackupBytes } from './workspace-restore.mjs';
 import { renderMeetingPptx } from './meeting-pptx.mjs';
+import { createWorkspaceHealth, readBuildRevision } from './workspace-health.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const staticFiles = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/activity-feed.js', ['activity-feed.js', 'text/javascript; charset=utf-8']],
+  ['/activity-view.js', ['activity-view.js', 'text/javascript; charset=utf-8']],
+  ['/activity.css', ['activity.css', 'text/css; charset=utf-8']],
   ['/status-view.js', ['status-view.js', 'text/javascript; charset=utf-8']],
   ['/reconciliation-view.js', ['reconciliation-view.js', 'text/javascript; charset=utf-8']],
   ['/weekly-view.js', ['weekly-view.js', 'text/javascript; charset=utf-8']],
@@ -101,7 +105,7 @@ function attachment(name) {
   return `attachment; filename*=UTF-8''${encoded}`;
 }
 
-async function route(request, response, workspace, getBrowserWorkspace) {
+async function route(request, response, workspace, getBrowserWorkspace, buildRevision) {
   headers(response);
   validateHost(request);
   const url = new URL(request.url, 'http://127.0.0.1');
@@ -212,6 +216,17 @@ async function route(request, response, workspace, getBrowserWorkspace) {
   if (method === 'POST' && /^\/api\/[a-z]+(?:-[a-z]+)?$/.test(url.pathname)) {
     validateWrite(request);
     const action = url.pathname.slice(5);
+    if (action === 'workspace-health') {
+      const input = await readJson(request);
+      const state = workspace.getState();
+      const health = await createWorkspaceHealth({
+        state, revision: buildRevision,
+        readRegister: () => workspace.statusRegister(input?.sourceId || undefined),
+        readBrowser: async () => (await getBrowserWorkspace()).getState(),
+        checkGit: () => nativeGit.checkGitExecutable({ gitExecutable: state.profile.gitExecutable })
+      });
+      return json(response, 200, health);
+    }
     if (action === 'gitcheck') {
       const input = await readJson(request);
       return json(response, 200, { version: await nativeGit.checkGitExecutable({ gitExecutable: input?.gitExecutable }) });
@@ -250,6 +265,7 @@ export async function startServer({
   if (seedDir) await seedWorkspace(seedDir, dataDir);
   const workspace = await openWorkspace({ dataDir, git, bundledStatusSourceId: bundledStatus?.id });
   if (bundledStatus) await workspace.importSource(bundledStatus.name, bundledStatus.bytes);
+  const buildRevision = await readBuildRevision(root);
   let browserWorkspace;
   function getBrowserWorkspace() {
     if (!browserWorkspace) {
@@ -269,7 +285,7 @@ export async function startServer({
     return browserWorkspace;
   }
   const server = createServer((request, response) => {
-    void route(request, response, workspace, getBrowserWorkspace).catch(error => {
+    void route(request, response, workspace, getBrowserWorkspace, buildRevision).catch(error => {
       if (response.headersSent || response.destroyed) {
         response.destroy();
         return;
